@@ -7,19 +7,25 @@ pub enum ParseError {
     InvalidMagic([u8; 4]),
     InvalidVersion([u8; 4]),
     Leb128Overflow,
+    UnknownValType(u8),
+    InvalidFuncType(u8),
+    UnknownExportKind(u8),
+    InvalidUtf8,
 }
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ParseError::UnexpectedEof => write!(f, "unexpected end of input"),
-            ParseError::InvalidMagic(got) => {
-                write!(f, "invalid magic: {:02X?}", got)
-            }
-            ParseError::InvalidVersion(got) => {
-                write!(f, "unsupported version: {:02X?}", got)
-            }
+            ParseError::InvalidMagic(got) => write!(f, "invalid magic: {:02X?}", got),
+            ParseError::InvalidVersion(got) => write!(f, "unsupported version: {:02X?}", got),
             ParseError::Leb128Overflow => write!(f, "LEB128 value overflows u32"),
+            ParseError::UnknownValType(b) => write!(f, "unknown value type: {:#04X}", b),
+            ParseError::InvalidFuncType(b) => {
+                write!(f, "expected 0x60 functype marker, got {:#04X}", b)
+            }
+            ParseError::UnknownExportKind(b) => write!(f, "unknown export kind: {:#04X}", b),
+            ParseError::InvalidUtf8 => write!(f, "export name is not valid UTF-8"),
         }
     }
 }
