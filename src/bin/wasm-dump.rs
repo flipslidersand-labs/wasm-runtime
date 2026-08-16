@@ -3,7 +3,7 @@ use wasm_runtime::{
     parser::{parse_header, section_iter, ParseError},
     sections::{
         decode_code_section, decode_export_section, decode_function_section, decode_global_section,
-        decode_import_section, decode_memory_section, decode_type_section,
+        decode_import_section, decode_memory_section, decode_table_section, decode_type_section,
     },
 };
 
@@ -58,6 +58,7 @@ fn main() {
             1 => print_count(decode_type_section(payload).map(|v| v.len()), "types"),
             2 => print_count(decode_import_section(payload).map(|v| v.len()), "imports"),
             3 => print_count(decode_function_section(payload).map(|v| v.len()), "funcs"),
+            4 => print_count(decode_table_section(payload).map(|v| v.len()), "tables"),
             5 => print_count(decode_memory_section(payload).map(|v| v.len()), "mems"),
             6 => print_count(decode_global_section(payload).map(|v| v.len()), "globals"),
             7 => print_count(decode_export_section(payload).map(|v| v.len()), "exports"),
@@ -105,6 +106,7 @@ fn print_verbose(bytes: &[u8]) {
                 }
                 Err(e) => println!("  <decode error: {}>", e),
             },
+            4 => print_entries(decode_table_section(payload)),
             5 => print_entries(decode_memory_section(payload)),
             6 => print_entries(decode_global_section(payload)),
             7 => print_entries(decode_export_section(payload)),

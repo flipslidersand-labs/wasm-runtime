@@ -205,6 +205,33 @@ pub fn decode_memory_section(payload: &[u8]) -> Result<Vec<Limits>, ParseError> 
     Ok(memories)
 }
 
+// ── Table section (id = 4) ────────────────────────────────────────────────────
+
+/// A table definition: its element reference type and size limits.
+#[derive(Debug, PartialEq, Clone)]
+pub struct Table {
+    pub reftype: RefType,
+    pub limits: Limits,
+}
+
+pub fn decode_table_section(payload: &[u8]) -> Result<Vec<Table>, ParseError> {
+    let mut pos = 0;
+    let (count, n) = decode_leb128_u32(payload, pos)?;
+    pos += n;
+
+    let mut tables = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        if pos >= payload.len() {
+            return Err(ParseError::UnexpectedEof);
+        }
+        let reftype = RefType::try_from(payload[pos])?;
+        pos += 1;
+        let limits = read_limits(payload, &mut pos)?;
+        tables.push(Table { reftype, limits });
+    }
+    Ok(tables)
+}
+
 // ── Function section (id = 3) ─────────────────────────────────────────────────
 
 pub fn decode_function_section(payload: &[u8]) -> Result<Vec<u32>, ParseError> {
@@ -496,6 +523,12 @@ impl fmt::Display for Limits {
             Some(max) => write!(f, "min={} max={}", self.min, max),
             None => write!(f, "min={}", self.min),
         }
+    }
+}
+
+impl fmt::Display for Table {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.reftype, self.limits)
     }
 }
 
@@ -1151,5 +1184,72 @@ mod tests {
             init_expr: vec![0x41, 0x2A, 0x0B],
         };
         assert_eq!(g.to_string(), "i32 mut init=3 bytes");
+    }
+
+    // ── Table section ────────────────────────────────────────────────────────
+
+    #[test]
+    fn table_section_empty() {
+        assert_eq!(decode_table_section(&[0x00]), Ok(vec![]));
+    }
+
+    #[test]
+    fn table_section_funcref_min_only() {
+        // count=1, reftype=funcref(0x70), limits: flag=0x00 min=1
+        let payload = [0x01, 0x70, 0x00, 0x01];
+        assert_eq!(
+            decode_table_section(&payload),
+            Ok(vec![Table {
+                reftype: RefType::FuncRef,
+                limits: Limits { min: 1, max: None },
+            }])
+        );
+    }
+
+    #[test]
+    fn table_section_externref_min_max() {
+        // count=1, reftype=externref(0x6F), limits: flag=0x01 min=1 max=16
+        let payload = [0x01, 0x6F, 0x01, 0x01, 0x10];
+        assert_eq!(
+            decode_table_section(&payload),
+            Ok(vec![Table {
+                reftype: RefType::ExternRef,
+                limits: Limits {
+                    min: 1,
+                    max: Some(16),
+                },
+            }])
+        );
+    }
+
+    #[test]
+    fn table_section_invalid_reftype() {
+        let payload = [0x01, 0x99, 0x00, 0x01];
+        assert_eq!(
+            decode_table_section(&payload),
+            Err(ParseError::UnknownRefType(0x99))
+        );
+    }
+
+    #[test]
+    fn table_section_truncated_before_reftype() {
+        // count=1 but no reftype byte follows
+        let payload = [0x01];
+        assert_eq!(
+            decode_table_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn display_table() {
+        let t = Table {
+            reftype: RefType::FuncRef,
+            limits: Limits {
+                min: 1,
+                max: Some(2),
+            },
+        };
+        assert_eq!(t.to_string(), "funcref min=1 max=2");
     }
 }
