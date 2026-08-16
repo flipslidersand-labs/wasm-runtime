@@ -10,6 +10,10 @@ pub enum ParseError {
     UnknownValType(u8),
     InvalidFuncType(u8),
     UnknownExportKind(u8),
+    UnknownImportKind(u8),
+    UnknownRefType(u8),
+    UnknownLimitsFlag(u8),
+    InvalidMutability(u8),
     InvalidUtf8,
 }
 
@@ -25,7 +29,11 @@ impl std::fmt::Display for ParseError {
                 write!(f, "expected 0x60 functype marker, got {:#04X}", b)
             }
             ParseError::UnknownExportKind(b) => write!(f, "unknown export kind: {:#04X}", b),
-            ParseError::InvalidUtf8 => write!(f, "export name is not valid UTF-8"),
+            ParseError::UnknownImportKind(b) => write!(f, "unknown import kind: {:#04X}", b),
+            ParseError::UnknownRefType(b) => write!(f, "unknown reftype: {:#04X}", b),
+            ParseError::UnknownLimitsFlag(b) => write!(f, "unknown limits flag: {:#04X}", b),
+            ParseError::InvalidMutability(b) => write!(f, "invalid mutability byte: {:#04X}", b),
+            ParseError::InvalidUtf8 => write!(f, "name is not valid UTF-8"),
         }
     }
 }

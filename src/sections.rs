@@ -68,6 +68,138 @@ fn read_val_type_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<ValType>, Pa
     Ok(out)
 }
 
+// ── Import section (id = 2) ──────────────────────────────────────────────────
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum RefType {
+    FuncRef,
+    ExternRef,
+}
+
+impl TryFrom<u8> for RefType {
+    type Error = ParseError;
+
+    fn try_from(byte: u8) -> Result<Self, Self::Error> {
+        match byte {
+            0x70 => Ok(RefType::FuncRef),
+            0x6F => Ok(RefType::ExternRef),
+            _ => Err(ParseError::UnknownRefType(byte)),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Limits {
+    pub min: u32,
+    pub max: Option<u32>,
+}
+
+fn read_limits(payload: &[u8], pos: &mut usize) -> Result<Limits, ParseError> {
+    if *pos >= payload.len() {
+        return Err(ParseError::UnexpectedEof);
+    }
+    let flag = payload[*pos];
+    *pos += 1;
+    let (min, n) = decode_leb128_u32(payload, *pos)?;
+    *pos += n;
+    let max = match flag {
+        0x00 => None,
+        0x01 => {
+            let (max, n) = decode_leb128_u32(payload, *pos)?;
+            *pos += n;
+            Some(max)
+        }
+        _ => return Err(ParseError::UnknownLimitsFlag(flag)),
+    };
+    Ok(Limits { min, max })
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ImportDesc {
+    Func(u32),
+    Table { reftype: RefType, limits: Limits },
+    Memory(Limits),
+    Global { valtype: ValType, mutable: bool },
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Import {
+    pub module: String,
+    pub name: String,
+    pub desc: ImportDesc,
+}
+
+fn read_name(payload: &[u8], pos: &mut usize) -> Result<String, ParseError> {
+    let (len, n) = decode_leb128_u32(payload, *pos)?;
+    *pos += n;
+    let end = *pos + len as usize;
+    if end > payload.len() {
+        return Err(ParseError::UnexpectedEof);
+    }
+    let s = std::str::from_utf8(&payload[*pos..end])
+        .map_err(|_| ParseError::InvalidUtf8)?
+        .to_string();
+    *pos = end;
+    Ok(s)
+}
+
+pub fn decode_import_section(payload: &[u8]) -> Result<Vec<Import>, ParseError> {
+    let mut pos = 0;
+    let (count, n) = decode_leb128_u32(payload, pos)?;
+    pos += n;
+
+    let mut imports = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let module = read_name(payload, &mut pos)?;
+        let name = read_name(payload, &mut pos)?;
+
+        if pos >= payload.len() {
+            return Err(ParseError::UnexpectedEof);
+        }
+        let kind = payload[pos];
+        pos += 1;
+
+        let desc = match kind {
+            0x00 => {
+                let (idx, n) = decode_leb128_u32(payload, pos)?;
+                pos += n;
+                ImportDesc::Func(idx)
+            }
+            0x01 => {
+                if pos >= payload.len() {
+                    return Err(ParseError::UnexpectedEof);
+                }
+                let reftype = RefType::try_from(payload[pos])?;
+                pos += 1;
+                let limits = read_limits(payload, &mut pos)?;
+                ImportDesc::Table { reftype, limits }
+            }
+            0x02 => {
+                let limits = read_limits(payload, &mut pos)?;
+                ImportDesc::Memory(limits)
+            }
+            0x03 => {
+                if pos + 1 >= payload.len() {
+                    return Err(ParseError::UnexpectedEof);
+                }
+                let valtype = ValType::try_from(payload[pos])?;
+                pos += 1;
+                let mutable = match payload[pos] {
+                    0x00 => false,
+                    0x01 => true,
+                    b => return Err(ParseError::InvalidMutability(b)),
+                };
+                pos += 1;
+                ImportDesc::Global { valtype, mutable }
+            }
+            _ => return Err(ParseError::UnknownImportKind(kind)),
+        };
+
+        imports.push(Import { module, name, desc });
+    }
+    Ok(imports)
+}
+
 // ── Function section (id = 3) ─────────────────────────────────────────────────
 
 pub fn decode_function_section(payload: &[u8]) -> Result<Vec<u32>, ParseError> {
@@ -153,6 +285,149 @@ pub fn decode_export_section(payload: &[u8]) -> Result<Vec<Export>, ParseError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Import section ────────────────────────────────────────────────────────
+
+    #[test]
+    fn import_section_empty() {
+        assert_eq!(decode_import_section(&[0x00]), Ok(vec![]));
+    }
+
+    #[test]
+    fn import_section_func_import() {
+        // count=1, module="env"(3), name="log"(3), kind=0x00(Func), type_idx=2
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"log");
+        payload.extend_from_slice(&[0x00, 0x02]);
+        assert_eq!(
+            decode_import_section(&payload),
+            Ok(vec![Import {
+                module: "env".to_string(),
+                name: "log".to_string(),
+                desc: ImportDesc::Func(2),
+            }])
+        );
+    }
+
+    #[test]
+    fn import_section_memory_import_no_max() {
+        // count=1, module="env"(3), name="mem"(3), kind=0x02(Memory), limits: flag=0x00 min=1
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"mem");
+        payload.extend_from_slice(&[0x02, 0x00, 0x01]);
+        assert_eq!(
+            decode_import_section(&payload),
+            Ok(vec![Import {
+                module: "env".to_string(),
+                name: "mem".to_string(),
+                desc: ImportDesc::Memory(Limits { min: 1, max: None }),
+            }])
+        );
+    }
+
+    #[test]
+    fn import_section_memory_import_with_max() {
+        // kind=0x02, limits: flag=0x01 min=1 max=4
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"mem");
+        payload.extend_from_slice(&[0x02, 0x01, 0x01, 0x04]);
+        assert_eq!(
+            decode_import_section(&payload),
+            Ok(vec![Import {
+                module: "env".to_string(),
+                name: "mem".to_string(),
+                desc: ImportDesc::Memory(Limits { min: 1, max: Some(4) }),
+            }])
+        );
+    }
+
+    #[test]
+    fn import_section_table_import() {
+        // kind=0x01, reftype=0x70(FuncRef), limits: flag=0x00 min=0
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"tbl");
+        payload.extend_from_slice(&[0x01, 0x70, 0x00, 0x00]);
+        assert_eq!(
+            decode_import_section(&payload),
+            Ok(vec![Import {
+                module: "env".to_string(),
+                name: "tbl".to_string(),
+                desc: ImportDesc::Table {
+                    reftype: RefType::FuncRef,
+                    limits: Limits { min: 0, max: None },
+                },
+            }])
+        );
+    }
+
+    #[test]
+    fn import_section_global_import_immutable() {
+        // kind=0x03, valtype=0x7F(i32), mut=0x00
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"glb");
+        payload.extend_from_slice(&[0x03, 0x7F, 0x00]);
+        assert_eq!(
+            decode_import_section(&payload),
+            Ok(vec![Import {
+                module: "env".to_string(),
+                name: "glb".to_string(),
+                desc: ImportDesc::Global {
+                    valtype: ValType::I32,
+                    mutable: false,
+                },
+            }])
+        );
+    }
+
+    #[test]
+    fn import_section_global_import_mutable() {
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"glb");
+        payload.extend_from_slice(&[0x03, 0x7F, 0x01]);
+        assert_eq!(
+            decode_import_section(&payload),
+            Ok(vec![Import {
+                module: "env".to_string(),
+                name: "glb".to_string(),
+                desc: ImportDesc::Global {
+                    valtype: ValType::I32,
+                    mutable: true,
+                },
+            }])
+        );
+    }
+
+    #[test]
+    fn import_section_unknown_kind() {
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"foo");
+        payload.push(0xFF);
+        assert!(matches!(
+            decode_import_section(&payload),
+            Err(ParseError::UnknownImportKind(0xFF))
+        ));
+    }
 
     // ── Type section ──────────────────────────────────────────────────────────
 
