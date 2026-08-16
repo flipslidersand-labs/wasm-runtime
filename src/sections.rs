@@ -1,4 +1,5 @@
 use crate::parser::{decode_leb128_u32, ParseError};
+use std::fmt;
 
 // ── Value types ──────────────────────────────────────────────────────────────
 
@@ -355,6 +356,109 @@ pub fn decode_code_section(payload: &[u8]) -> Result<Vec<FuncBody>, ParseError> 
     }
 
     Ok(bodies)
+}
+
+// ── Display implementations (human-readable, used by `wasm-dump --verbose`) ────
+
+impl fmt::Display for ValType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ValType::I32 => "i32",
+            ValType::I64 => "i64",
+            ValType::F32 => "f32",
+            ValType::F64 => "f64",
+        })
+    }
+}
+
+impl fmt::Display for RefType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            RefType::FuncRef => "funcref",
+            RefType::ExternRef => "externref",
+        })
+    }
+}
+
+impl fmt::Display for FuncType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let params = join_valtypes(&self.params);
+        write!(f, "({}) -> ", params)?;
+        if self.results.is_empty() {
+            f.write_str("()")
+        } else {
+            f.write_str(&join_valtypes(&self.results))
+        }
+    }
+}
+
+fn join_valtypes(vs: &[ValType]) -> String {
+    vs.iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+impl fmt::Display for Limits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.max {
+            Some(max) => write!(f, "min={} max={}", self.min, max),
+            None => write!(f, "min={}", self.min),
+        }
+    }
+}
+
+impl fmt::Display for ImportDesc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ImportDesc::Func(idx) => write!(f, "Func({})", idx),
+            ImportDesc::Table { reftype, limits } => write!(f, "Table({} {})", reftype, limits),
+            ImportDesc::Memory(limits) => write!(f, "Memory({})", limits),
+            ImportDesc::Global { valtype, mutable } => {
+                write!(
+                    f,
+                    "Global({}{})",
+                    valtype,
+                    if *mutable { " mut" } else { "" }
+                )
+            }
+        }
+    }
+}
+
+impl fmt::Display for Import {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}::{}  {}", self.module, self.name, self.desc)
+    }
+}
+
+impl fmt::Display for ExportKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ExportKind::Func => "Func",
+            ExportKind::Table => "Table",
+            ExportKind::Memory => "Memory",
+            ExportKind::Global => "Global",
+        })
+    }
+}
+
+impl fmt::Display for Export {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\"{}\"  {}({})", self.name, self.kind, self.index)
+    }
+}
+
+impl fmt::Display for FuncBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let locals = self
+            .locals
+            .iter()
+            .map(|l| format!("{} {}", l.count, l.valtype))
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(f, "locals=[{}] expr={} bytes", locals, self.expr.len())
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -760,5 +864,89 @@ mod tests {
         // size=1 covers only local_count byte; reading the local's valtype overruns.
         let payload = [0x01, 0x01, 0x01, 0x02, 0x7F];
         assert_eq!(decode_code_section(&payload), Err(ParseError::SizeMismatch));
+    }
+
+    // ── Display ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn display_valtype() {
+        assert_eq!(ValType::I32.to_string(), "i32");
+        assert_eq!(ValType::F64.to_string(), "f64");
+    }
+
+    #[test]
+    fn display_functype() {
+        let ft = FuncType {
+            params: vec![ValType::I32, ValType::I32],
+            results: vec![ValType::I32],
+        };
+        assert_eq!(ft.to_string(), "(i32, i32) -> i32");
+    }
+
+    #[test]
+    fn display_functype_no_result() {
+        let ft = FuncType {
+            params: vec![],
+            results: vec![],
+        };
+        assert_eq!(ft.to_string(), "() -> ()");
+    }
+
+    #[test]
+    fn display_limits() {
+        assert_eq!(Limits { min: 1, max: None }.to_string(), "min=1");
+        assert_eq!(
+            Limits {
+                min: 1,
+                max: Some(4)
+            }
+            .to_string(),
+            "min=1 max=4"
+        );
+    }
+
+    #[test]
+    fn display_import() {
+        let imp = Import {
+            module: "env".to_string(),
+            name: "log".to_string(),
+            desc: ImportDesc::Func(2),
+        };
+        assert_eq!(imp.to_string(), "env::log  Func(2)");
+    }
+
+    #[test]
+    fn display_import_global_mut() {
+        let imp = Import {
+            module: "env".to_string(),
+            name: "g".to_string(),
+            desc: ImportDesc::Global {
+                valtype: ValType::I32,
+                mutable: true,
+            },
+        };
+        assert_eq!(imp.to_string(), "env::g  Global(i32 mut)");
+    }
+
+    #[test]
+    fn display_export() {
+        let exp = Export {
+            name: "add".to_string(),
+            kind: ExportKind::Func,
+            index: 0,
+        };
+        assert_eq!(exp.to_string(), "\"add\"  Func(0)");
+    }
+
+    #[test]
+    fn display_func_body() {
+        let body = FuncBody {
+            locals: vec![LocalDecl {
+                count: 2,
+                valtype: ValType::I32,
+            }],
+            expr: vec![0x20, 0x00, 0x0B],
+        };
+        assert_eq!(body.to_string(), "locals=[2 i32] expr=3 bytes");
     }
 }
