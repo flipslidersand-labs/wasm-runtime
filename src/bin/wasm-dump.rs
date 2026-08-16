@@ -1,5 +1,6 @@
 use std::process;
 use wasm_runtime::{
+    module::parse_module,
     parser::{parse_header, section_iter, ParseError},
     sections::{
         decode_code_section, decode_data_section, decode_export_section, decode_function_section,
@@ -11,11 +12,12 @@ use wasm_runtime::{
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let (verbose, path) = match args.as_slice() {
-        [_, flag, path] if flag == "--verbose" || flag == "-v" => (true, path.clone()),
-        [_, path] => (false, path.clone()),
+    let (verbose, validate, path) = match args.as_slice() {
+        [_, flag, path] if flag == "--verbose" || flag == "-v" => (true, false, path.clone()),
+        [_, flag, path] if flag == "--validate" => (false, true, path.clone()),
+        [_, path] => (false, false, path.clone()),
         _ => {
-            eprintln!("Usage: wasm-dump [--verbose|-v] <file.wasm>");
+            eprintln!("Usage: wasm-dump [--verbose|-v | --validate] <file.wasm>");
             process::exit(1);
         }
     };
@@ -72,6 +74,20 @@ fn main() {
 
     if verbose {
         print_verbose(&bytes);
+    }
+
+    if validate {
+        match parse_module(&bytes).map(|m| m.validate()) {
+            Ok(Ok(())) => println!("\nvalidation: OK"),
+            Ok(Err(e)) => {
+                eprintln!("\nvalidation error: {}", e);
+                process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("\nerror: {}", e);
+                process::exit(1);
+            }
+        }
     }
 }
 
