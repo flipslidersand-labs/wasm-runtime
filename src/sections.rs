@@ -1,4 +1,4 @@
-use crate::parser::{decode_leb128_u32, ParseError};
+use crate::parser::{decode_leb128_i32, decode_leb128_i64, decode_leb128_u32, ParseError};
 use std::fmt;
 
 // ── Value types ──────────────────────────────────────────────────────────────
@@ -459,6 +459,69 @@ fn advance(payload: &[u8], pos: &mut usize, n: usize) -> Result<(), ParseError> 
     Ok(())
 }
 
+/// A decoded constant initializer expression value. Covers the constant
+/// instructions valid in a global / element / data init_expr.
+#[derive(Debug, PartialEq, Clone)]
+pub enum ConstExpr {
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
+    GlobalGet(u32),
+}
+
+/// Interprets the raw bytes of an init_expr (as produced by `read_init_expr`,
+/// i.e. a single const instruction followed by `0x0B`) into a typed value.
+pub fn parse_const_expr(bytes: &[u8]) -> Result<ConstExpr, ParseError> {
+    if bytes.is_empty() {
+        return Err(ParseError::UnexpectedEof);
+    }
+    let op = bytes[0];
+    let mut pos = 1;
+
+    let expr = match op {
+        0x41 => {
+            let (v, n) = decode_leb128_i32(bytes, pos)?;
+            pos += n;
+            ConstExpr::I32(v)
+        }
+        0x42 => {
+            let (v, n) = decode_leb128_i64(bytes, pos)?;
+            pos += n;
+            ConstExpr::I64(v)
+        }
+        0x43 => {
+            if pos + 4 > bytes.len() {
+                return Err(ParseError::UnexpectedEof);
+            }
+            let v = f32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap());
+            pos += 4;
+            ConstExpr::F32(v)
+        }
+        0x44 => {
+            if pos + 8 > bytes.len() {
+                return Err(ParseError::UnexpectedEof);
+            }
+            let v = f64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
+            pos += 8;
+            ConstExpr::F64(v)
+        }
+        0x23 => {
+            let (v, n) = decode_leb128_u32(bytes, pos)?;
+            pos += n;
+            ConstExpr::GlobalGet(v)
+        }
+        _ => return Err(ParseError::UnsupportedInitExpr(op)),
+    };
+
+    // A single-value const expr must be terminated immediately by `end` (0x0B).
+    match bytes.get(pos) {
+        Some(0x0B) => Ok(expr),
+        Some(&other) => Err(ParseError::UnsupportedInitExpr(other)),
+        None => Err(ParseError::UnexpectedEof),
+    }
+}
+
 pub fn decode_global_section(payload: &[u8]) -> Result<Vec<Global>, ParseError> {
     let mut pos = 0;
     let (count, n) = decode_leb128_u32(payload, pos)?;
@@ -671,13 +734,34 @@ impl fmt::Display for GlobalType {
     }
 }
 
+impl fmt::Display for ConstExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConstExpr::I32(v) => write!(f, "{}", v),
+            ConstExpr::I64(v) => write!(f, "{}", v),
+            ConstExpr::F32(v) => write!(f, "{}", v),
+            ConstExpr::F64(v) => write!(f, "{}", v),
+            ConstExpr::GlobalGet(i) => write!(f, "global.get {}", i),
+        }
+    }
+}
+
+/// Renders an init_expr's decoded value, falling back to a byte count when the
+/// expression uses an instruction we don't interpret.
+fn fmt_init_expr(bytes: &[u8]) -> String {
+    match parse_const_expr(bytes) {
+        Ok(expr) => expr.to_string(),
+        Err(_) => format!("<{} bytes>", bytes.len()),
+    }
+}
+
 impl fmt::Display for Global {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} init={} bytes",
+            "{} = {}",
             self.global_type,
-            self.init_expr.len()
+            fmt_init_expr(&self.init_expr)
         )
     }
 }
@@ -690,9 +774,9 @@ impl fmt::Display for DataSegment {
                 offset_expr,
             } => write!(
                 f,
-                "active mem[{}] offset={} bytes data={} bytes",
+                "active mem[{}] offset={} data={} bytes",
                 memory_index,
-                offset_expr.len(),
+                fmt_init_expr(offset_expr),
                 self.bytes.len()
             ),
             DataMode::Passive => write!(f, "passive data={} bytes", self.bytes.len()),
@@ -1276,7 +1360,7 @@ mod tests {
             },
             init_expr: vec![0x41, 0x2A, 0x0B],
         };
-        assert_eq!(g.to_string(), "i32 mut init=3 bytes");
+        assert_eq!(g.to_string(), "i32 mut = 42");
     }
 
     // ── Table section ────────────────────────────────────────────────────────
@@ -1427,14 +1511,86 @@ mod tests {
             },
             bytes: vec![0xAA, 0xBB, 0xCC],
         };
-        assert_eq!(
-            active.to_string(),
-            "active mem[0] offset=3 bytes data=3 bytes"
-        );
+        assert_eq!(active.to_string(), "active mem[0] offset=0 data=3 bytes");
         let passive = DataSegment {
             mode: DataMode::Passive,
             bytes: vec![0x01, 0x02],
         };
         assert_eq!(passive.to_string(), "passive data=2 bytes");
+    }
+
+    // ── const expr ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn const_expr_i32_positive() {
+        // i32.const 42 (0x41 0x2A) end (0x0B)
+        assert_eq!(
+            parse_const_expr(&[0x41, 0x2A, 0x0B]),
+            Ok(ConstExpr::I32(42))
+        );
+    }
+
+    #[test]
+    fn const_expr_i32_negative() {
+        // i32.const -1 (0x41 0x7F) end
+        assert_eq!(
+            parse_const_expr(&[0x41, 0x7F, 0x0B]),
+            Ok(ConstExpr::I32(-1))
+        );
+    }
+
+    #[test]
+    fn const_expr_i64() {
+        // i64.const -128 (0x42 0x80 0x7F) end
+        assert_eq!(
+            parse_const_expr(&[0x42, 0x80, 0x7F, 0x0B]),
+            Ok(ConstExpr::I64(-128))
+        );
+    }
+
+    #[test]
+    fn const_expr_f32() {
+        // f32.const 1.0 = 0x3F800000 little-endian
+        let bytes = [0x43, 0x00, 0x00, 0x80, 0x3F, 0x0B];
+        assert_eq!(parse_const_expr(&bytes), Ok(ConstExpr::F32(1.0)));
+    }
+
+    #[test]
+    fn const_expr_f64() {
+        // f64.const 1.0 = 0x3FF0000000000000 little-endian
+        let bytes = [0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F, 0x0B];
+        assert_eq!(parse_const_expr(&bytes), Ok(ConstExpr::F64(1.0)));
+    }
+
+    #[test]
+    fn const_expr_global_get() {
+        // global.get 3 (0x23 0x03) end
+        assert_eq!(
+            parse_const_expr(&[0x23, 0x03, 0x0B]),
+            Ok(ConstExpr::GlobalGet(3))
+        );
+    }
+
+    #[test]
+    fn const_expr_missing_end() {
+        // i32.const 1 without trailing 0x0B
+        assert_eq!(
+            parse_const_expr(&[0x41, 0x01]),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn const_expr_unsupported_opcode() {
+        assert_eq!(
+            parse_const_expr(&[0xFF, 0x0B]),
+            Err(ParseError::UnsupportedInitExpr(0xFF))
+        );
+    }
+
+    #[test]
+    fn display_const_expr() {
+        assert_eq!(ConstExpr::I32(-5).to_string(), "-5");
+        assert_eq!(ConstExpr::GlobalGet(2).to_string(), "global.get 2");
     }
 }

@@ -81,6 +81,53 @@ pub fn decode_leb128_u32(bytes: &[u8], offset: usize) -> Result<(u32, usize), Pa
     }
 }
 
+/// Decodes a signed LEB128 i32 from `bytes[offset..]`.
+/// Returns `(value, bytes_consumed)`.
+pub fn decode_leb128_i32(bytes: &[u8], offset: usize) -> Result<(i32, usize), ParseError> {
+    let (value, consumed) = decode_leb128_signed(bytes, offset, 32)?;
+    Ok((value as i32, consumed))
+}
+
+/// Decodes a signed LEB128 i64 from `bytes[offset..]`.
+/// Returns `(value, bytes_consumed)`.
+pub fn decode_leb128_i64(bytes: &[u8], offset: usize) -> Result<(i64, usize), ParseError> {
+    decode_leb128_signed(bytes, offset, 64)
+}
+
+/// Shared signed LEB128 core. `bits` is the target width (32 or 64) and bounds
+/// the byte count so an over-long encoding is rejected as overflow.
+fn decode_leb128_signed(
+    bytes: &[u8],
+    offset: usize,
+    bits: u32,
+) -> Result<(i64, usize), ParseError> {
+    let mut result: i64 = 0;
+    let mut shift: u32 = 0;
+    let mut pos = offset;
+
+    loop {
+        if pos >= bytes.len() {
+            return Err(ParseError::UnexpectedEof);
+        }
+        let byte = bytes[pos];
+        pos += 1;
+
+        result |= ((byte & 0x7F) as i64) << shift;
+        shift += 7;
+
+        if byte & 0x80 == 0 {
+            // Sign-extend when the sign bit (0x40) of the final byte is set.
+            if shift < 64 && (byte & 0x40) != 0 {
+                result |= -1i64 << shift;
+            }
+            return Ok((result, pos - offset));
+        }
+        if shift >= bits + 7 {
+            return Err(ParseError::Leb128Overflow);
+        }
+    }
+}
+
 /// A parsed section header from a wasm binary.
 #[derive(Debug, PartialEq)]
 pub struct SectionHeader {
@@ -227,6 +274,58 @@ mod tests {
     fn leb128_eof_returns_error() {
         assert_eq!(
             decode_leb128_u32(&[0x80], 0),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    // ── signed LEB128 ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn leb128_i32_positive_single_byte() {
+        // 0x2A = 42 (sign bit 0x40 clear → positive)
+        assert_eq!(decode_leb128_i32(&[0x2A], 0), Ok((42, 1)));
+    }
+
+    #[test]
+    fn leb128_i32_negative_single_byte() {
+        // 0x7F = -1 (sign bit set, sign-extended)
+        assert_eq!(decode_leb128_i32(&[0x7F], 0), Ok((-1, 1)));
+        // 0x40 = -64
+        assert_eq!(decode_leb128_i32(&[0x40], 0), Ok((-64, 1)));
+    }
+
+    #[test]
+    fn leb128_i32_positive_two_bytes() {
+        // 64 requires 0xC0 0x00 (single byte 0x40 would be -64)
+        assert_eq!(decode_leb128_i32(&[0xC0, 0x00], 0), Ok((64, 2)));
+    }
+
+    #[test]
+    fn leb128_i32_negative_multibyte() {
+        // -128 = 0x80 0x7F
+        assert_eq!(decode_leb128_i32(&[0x80, 0x7F], 0), Ok((-128, 2)));
+    }
+
+    #[test]
+    fn leb128_i64_large_negative() {
+        // -12345 in signed LEB128 = 0xC7 0x9F 0x7F
+        assert_eq!(decode_leb128_i64(&[0xC7, 0x9F, 0x7F], 0), Ok((-12345, 3)));
+    }
+
+    #[test]
+    fn leb128_i32_overflow_returns_error() {
+        // 6 continuation bytes exceed i32 width
+        let bytes = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80];
+        assert_eq!(
+            decode_leb128_i32(&bytes, 0),
+            Err(ParseError::Leb128Overflow)
+        );
+    }
+
+    #[test]
+    fn leb128_i32_eof_returns_error() {
+        assert_eq!(
+            decode_leb128_i32(&[0x80], 0),
             Err(ParseError::UnexpectedEof)
         );
     }
