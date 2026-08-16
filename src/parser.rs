@@ -16,6 +16,7 @@ pub enum ParseError {
     InvalidMutability(u8),
     InvalidUtf8,
     SizeMismatch,
+    UnsupportedInitExpr(u8),
 }
 
 impl std::fmt::Display for ParseError {
@@ -37,6 +38,9 @@ impl std::fmt::Display for ParseError {
             ParseError::InvalidUtf8 => write!(f, "name is not valid UTF-8"),
             ParseError::SizeMismatch => {
                 write!(f, "declared function body size does not match payload")
+            }
+            ParseError::UnsupportedInitExpr(b) => {
+                write!(f, "unsupported init_expr opcode: {:#04X}", b)
             }
         }
     }

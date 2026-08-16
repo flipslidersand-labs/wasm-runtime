@@ -180,17 +180,7 @@ pub fn decode_import_section(payload: &[u8]) -> Result<Vec<Import>, ParseError> 
                 ImportDesc::Memory(limits)
             }
             0x03 => {
-                if pos + 1 >= payload.len() {
-                    return Err(ParseError::UnexpectedEof);
-                }
-                let valtype = ValType::try_from(payload[pos])?;
-                pos += 1;
-                let mutable = match payload[pos] {
-                    0x00 => false,
-                    0x01 => true,
-                    b => return Err(ParseError::InvalidMutability(b)),
-                };
-                pos += 1;
+                let GlobalType { valtype, mutable } = read_global_type(payload, &mut pos)?;
                 ImportDesc::Global { valtype, mutable }
             }
             _ => return Err(ParseError::UnknownImportKind(kind)),
@@ -358,6 +348,107 @@ pub fn decode_code_section(payload: &[u8]) -> Result<Vec<FuncBody>, ParseError> 
     Ok(bodies)
 }
 
+// ── Global section (id = 6) ──────────────────────────────────────────────────
+
+/// The type of a global variable: its value type and whether it is mutable.
+#[derive(Debug, PartialEq, Clone)]
+pub struct GlobalType {
+    pub valtype: ValType,
+    pub mutable: bool,
+}
+
+/// A global variable: its type plus the raw bytes of its initializer expression
+/// (including the terminating `0x0B` end opcode).
+#[derive(Debug, PartialEq, Clone)]
+pub struct Global {
+    pub global_type: GlobalType,
+    pub init_expr: Vec<u8>,
+}
+
+/// Reads a `globaltype := valtype mut` at `*pos`, advancing past both bytes.
+/// Shared with the import section's global-import descriptor.
+fn read_global_type(payload: &[u8], pos: &mut usize) -> Result<GlobalType, ParseError> {
+    if *pos >= payload.len() {
+        return Err(ParseError::UnexpectedEof);
+    }
+    let valtype = ValType::try_from(payload[*pos])?;
+    *pos += 1;
+
+    if *pos >= payload.len() {
+        return Err(ParseError::UnexpectedEof);
+    }
+    let mutable = match payload[*pos] {
+        0x00 => false,
+        0x01 => true,
+        b => return Err(ParseError::InvalidMutability(b)),
+    };
+    *pos += 1;
+
+    Ok(GlobalType { valtype, mutable })
+}
+
+/// Skips a single LEB128-encoded integer immediate (signed or unsigned) without
+/// decoding its value, advancing `*pos` past the last continuation byte.
+fn skip_leb128(payload: &[u8], pos: &mut usize) -> Result<(), ParseError> {
+    loop {
+        if *pos >= payload.len() {
+            return Err(ParseError::UnexpectedEof);
+        }
+        let byte = payload[*pos];
+        *pos += 1;
+        if byte & 0x80 == 0 {
+            return Ok(());
+        }
+    }
+}
+
+/// Reads a constant initializer expression, returning its raw bytes including the
+/// terminating `0x0B`. Supports the constant instructions valid in a global
+/// init_expr: `i32/i64/f32/f64.const` and `global.get`.
+fn read_init_expr(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError> {
+    let start = *pos;
+    loop {
+        if *pos >= payload.len() {
+            return Err(ParseError::UnexpectedEof);
+        }
+        let op = payload[*pos];
+        *pos += 1;
+        match op {
+            0x0B => break,                                    // end
+            0x41 | 0x42 | 0x23 => skip_leb128(payload, pos)?, // i32/i64.const, global.get
+            0x43 => advance(payload, pos, 4)?,                // f32.const
+            0x44 => advance(payload, pos, 8)?,                // f64.const
+            _ => return Err(ParseError::UnsupportedInitExpr(op)),
+        }
+    }
+    Ok(payload[start..*pos].to_vec())
+}
+
+fn advance(payload: &[u8], pos: &mut usize, n: usize) -> Result<(), ParseError> {
+    if *pos + n > payload.len() {
+        return Err(ParseError::UnexpectedEof);
+    }
+    *pos += n;
+    Ok(())
+}
+
+pub fn decode_global_section(payload: &[u8]) -> Result<Vec<Global>, ParseError> {
+    let mut pos = 0;
+    let (count, n) = decode_leb128_u32(payload, pos)?;
+    pos += n;
+
+    let mut globals = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let global_type = read_global_type(payload, &mut pos)?;
+        let init_expr = read_init_expr(payload, &mut pos)?;
+        globals.push(Global {
+            global_type,
+            init_expr,
+        });
+    }
+    Ok(globals)
+}
+
 // ── Display implementations (human-readable, used by `wasm-dump --verbose`) ────
 
 impl fmt::Display for ValType {
@@ -458,6 +549,28 @@ impl fmt::Display for FuncBody {
             .collect::<Vec<_>>()
             .join(", ");
         write!(f, "locals=[{}] expr={} bytes", locals, self.expr.len())
+    }
+}
+
+impl fmt::Display for GlobalType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}{}",
+            self.valtype,
+            if self.mutable { " mut" } else { "" }
+        )
+    }
+}
+
+impl fmt::Display for Global {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} init={} bytes",
+            self.global_type,
+            self.init_expr.len()
+        )
     }
 }
 
@@ -948,5 +1061,95 @@ mod tests {
             expr: vec![0x20, 0x00, 0x0B],
         };
         assert_eq!(body.to_string(), "locals=[2 i32] expr=3 bytes");
+    }
+
+    // ── Global section ───────────────────────────────────────────────────────
+
+    #[test]
+    fn global_section_empty() {
+        assert_eq!(decode_global_section(&[0x00]), Ok(vec![]));
+    }
+
+    #[test]
+    fn global_section_immutable_i32_const() {
+        // count=1, valtype=i32(0x7F), mut=0x00 (const),
+        // init_expr = i32.const 42 (0x41 0x2A) end (0x0B)
+        let payload = [0x01, 0x7F, 0x00, 0x41, 0x2A, 0x0B];
+        assert_eq!(
+            decode_global_section(&payload),
+            Ok(vec![Global {
+                global_type: GlobalType {
+                    valtype: ValType::I32,
+                    mutable: false,
+                },
+                init_expr: vec![0x41, 0x2A, 0x0B],
+            }])
+        );
+    }
+
+    #[test]
+    fn global_section_mutable_flag() {
+        // count=1, valtype=i64(0x7E), mut=0x01 (mutable),
+        // init_expr = i64.const 1 (0x42 0x01) end (0x0B)
+        let payload = [0x01, 0x7E, 0x01, 0x42, 0x01, 0x0B];
+        assert_eq!(
+            decode_global_section(&payload),
+            Ok(vec![Global {
+                global_type: GlobalType {
+                    valtype: ValType::I64,
+                    mutable: true,
+                },
+                init_expr: vec![0x42, 0x01, 0x0B],
+            }])
+        );
+    }
+
+    #[test]
+    fn global_section_multibyte_leb_not_mistaken_for_end() {
+        // i32.const with a value whose LEB128 encoding contains 0x0B as a
+        // continuation byte must not terminate the expr early.
+        // 0x8B 0x01 = LEB128 for 139; the 0x8B has high bit set so it is consumed.
+        let payload = [0x01, 0x7F, 0x00, 0x41, 0x8B, 0x01, 0x0B];
+        assert_eq!(
+            decode_global_section(&payload),
+            Ok(vec![Global {
+                global_type: GlobalType {
+                    valtype: ValType::I32,
+                    mutable: false,
+                },
+                init_expr: vec![0x41, 0x8B, 0x01, 0x0B],
+            }])
+        );
+    }
+
+    #[test]
+    fn global_section_invalid_mutability() {
+        let payload = [0x01, 0x7F, 0x02, 0x41, 0x00, 0x0B];
+        assert_eq!(
+            decode_global_section(&payload),
+            Err(ParseError::InvalidMutability(0x02))
+        );
+    }
+
+    #[test]
+    fn global_section_unsupported_init_expr() {
+        // opcode 0xFF is not a valid const instruction
+        let payload = [0x01, 0x7F, 0x00, 0xFF, 0x0B];
+        assert_eq!(
+            decode_global_section(&payload),
+            Err(ParseError::UnsupportedInitExpr(0xFF))
+        );
+    }
+
+    #[test]
+    fn display_global() {
+        let g = Global {
+            global_type: GlobalType {
+                valtype: ValType::I32,
+                mutable: true,
+            },
+            init_expr: vec![0x41, 0x2A, 0x0B],
+        };
+        assert_eq!(g.to_string(), "i32 mut init=3 bytes");
     }
 }
