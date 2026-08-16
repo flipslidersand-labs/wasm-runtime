@@ -1,0 +1,15 @@
+[package]
+name = "wasm-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly binary parser — MVP implementation"
+license = "MIT"
+repository = "https://github.com/flipslidersand/wasm-runtime"
+
+[[bin]]
+name = "wasm-dump"
+path = "src/bin/wasm-dump.rs"
+
+[dependencies]
+
+[dev-dependencies]
