@@ -17,6 +17,7 @@ pub enum ParseError {
     InvalidUtf8,
     SizeMismatch,
     UnsupportedInitExpr(u8),
+    UnsupportedDataFlag(u8),
 }
 
 impl std::fmt::Display for ParseError {
@@ -41,6 +42,9 @@ impl std::fmt::Display for ParseError {
             }
             ParseError::UnsupportedInitExpr(b) => {
                 write!(f, "unsupported init_expr opcode: {:#04X}", b)
+            }
+            ParseError::UnsupportedDataFlag(b) => {
+                write!(f, "unsupported data segment flag: {:#04X}", b)
             }
         }
     }

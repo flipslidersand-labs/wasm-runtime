@@ -476,6 +476,81 @@ pub fn decode_global_section(payload: &[u8]) -> Result<Vec<Global>, ParseError> 
     Ok(globals)
 }
 
+// ── Data section (id = 11) ───────────────────────────────────────────────────
+
+/// How a data segment is placed into memory.
+#[derive(Debug, PartialEq, Clone)]
+pub enum DataMode {
+    /// Copied into `memory[memory_index]` at `offset_expr` during instantiation.
+    /// `offset_expr` holds the raw const-expr bytes (including the trailing `0x0B`).
+    Active {
+        memory_index: u32,
+        offset_expr: Vec<u8>,
+    },
+    /// Not copied automatically; referenced by `memory.init`.
+    Passive,
+}
+
+/// A data segment: its placement mode and raw initializer bytes.
+#[derive(Debug, PartialEq, Clone)]
+pub struct DataSegment {
+    pub mode: DataMode,
+    pub bytes: Vec<u8>,
+}
+
+/// Reads a `count`-prefixed raw byte vector, advancing `*pos` past it.
+fn read_byte_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError> {
+    let (len, n) = decode_leb128_u32(payload, *pos)?;
+    *pos += n;
+    let end = *pos + len as usize;
+    if end > payload.len() {
+        return Err(ParseError::UnexpectedEof);
+    }
+    let bytes = payload[*pos..end].to_vec();
+    *pos = end;
+    Ok(bytes)
+}
+
+pub fn decode_data_section(payload: &[u8]) -> Result<Vec<DataSegment>, ParseError> {
+    let mut pos = 0;
+    let (count, n) = decode_leb128_u32(payload, pos)?;
+    pos += n;
+
+    let mut segments = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let (flag, n) = decode_leb128_u32(payload, pos)?;
+        pos += n;
+
+        let mode = match flag {
+            // active, memory 0, offset_expr follows
+            0 => {
+                let offset_expr = read_init_expr(payload, &mut pos)?;
+                DataMode::Active {
+                    memory_index: 0,
+                    offset_expr,
+                }
+            }
+            // passive
+            1 => DataMode::Passive,
+            // active, explicit memory index, offset_expr follows
+            2 => {
+                let (memory_index, n) = decode_leb128_u32(payload, pos)?;
+                pos += n;
+                let offset_expr = read_init_expr(payload, &mut pos)?;
+                DataMode::Active {
+                    memory_index,
+                    offset_expr,
+                }
+            }
+            _ => return Err(ParseError::UnsupportedDataFlag(flag as u8)),
+        };
+
+        let bytes = read_byte_vec(payload, &mut pos)?;
+        segments.push(DataSegment { mode, bytes });
+    }
+    Ok(segments)
+}
+
 // ── Display implementations (human-readable, used by `wasm-dump --verbose`) ────
 
 impl fmt::Display for ValType {
@@ -604,6 +679,24 @@ impl fmt::Display for Global {
             self.global_type,
             self.init_expr.len()
         )
+    }
+}
+
+impl fmt::Display for DataSegment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.mode {
+            DataMode::Active {
+                memory_index,
+                offset_expr,
+            } => write!(
+                f,
+                "active mem[{}] offset={} bytes data={} bytes",
+                memory_index,
+                offset_expr.len(),
+                self.bytes.len()
+            ),
+            DataMode::Passive => write!(f, "passive data={} bytes", self.bytes.len()),
+        }
     }
 }
 
@@ -1251,5 +1344,97 @@ mod tests {
             },
         };
         assert_eq!(t.to_string(), "funcref min=1 max=2");
+    }
+
+    // ── Data section ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn data_section_empty() {
+        assert_eq!(decode_data_section(&[0x00]), Ok(vec![]));
+    }
+
+    #[test]
+    fn data_section_active_flag0() {
+        // count=1, flag=0, offset_expr=i32.const 0 end (0x41 0x00 0x0B),
+        // bytes: len=3 [0xAA,0xBB,0xCC]
+        let payload = [0x01, 0x00, 0x41, 0x00, 0x0B, 0x03, 0xAA, 0xBB, 0xCC];
+        assert_eq!(
+            decode_data_section(&payload),
+            Ok(vec![DataSegment {
+                mode: DataMode::Active {
+                    memory_index: 0,
+                    offset_expr: vec![0x41, 0x00, 0x0B],
+                },
+                bytes: vec![0xAA, 0xBB, 0xCC],
+            }])
+        );
+    }
+
+    #[test]
+    fn data_section_passive_flag1() {
+        // count=1, flag=1, bytes: len=2 [0x01,0x02]
+        let payload = [0x01, 0x01, 0x02, 0x01, 0x02];
+        assert_eq!(
+            decode_data_section(&payload),
+            Ok(vec![DataSegment {
+                mode: DataMode::Passive,
+                bytes: vec![0x01, 0x02],
+            }])
+        );
+    }
+
+    #[test]
+    fn data_section_active_explicit_memidx_flag2() {
+        // count=1, flag=2, memidx=1, offset_expr=i32.const 8 end, bytes len=1 [0xFF]
+        let payload = [0x01, 0x02, 0x01, 0x41, 0x08, 0x0B, 0x01, 0xFF];
+        assert_eq!(
+            decode_data_section(&payload),
+            Ok(vec![DataSegment {
+                mode: DataMode::Active {
+                    memory_index: 1,
+                    offset_expr: vec![0x41, 0x08, 0x0B],
+                },
+                bytes: vec![0xFF],
+            }])
+        );
+    }
+
+    #[test]
+    fn data_section_unsupported_flag() {
+        let payload = [0x01, 0x05, 0x00];
+        assert_eq!(
+            decode_data_section(&payload),
+            Err(ParseError::UnsupportedDataFlag(0x05))
+        );
+    }
+
+    #[test]
+    fn data_section_byte_vec_overrun() {
+        // flag=1 passive, bytes claims len=5 but only 2 follow
+        let payload = [0x01, 0x01, 0x05, 0xAA, 0xBB];
+        assert_eq!(
+            decode_data_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn display_data_segment() {
+        let active = DataSegment {
+            mode: DataMode::Active {
+                memory_index: 0,
+                offset_expr: vec![0x41, 0x00, 0x0B],
+            },
+            bytes: vec![0xAA, 0xBB, 0xCC],
+        };
+        assert_eq!(
+            active.to_string(),
+            "active mem[0] offset=3 bytes data=3 bytes"
+        );
+        let passive = DataSegment {
+            mode: DataMode::Passive,
+            bytes: vec![0x01, 0x02],
+        };
+        assert_eq!(passive.to_string(), "passive data=2 bytes");
     }
 }
