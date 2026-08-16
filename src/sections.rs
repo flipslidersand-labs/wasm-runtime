@@ -200,6 +200,20 @@ pub fn decode_import_section(payload: &[u8]) -> Result<Vec<Import>, ParseError> 
     Ok(imports)
 }
 
+// ── Memory section (id = 5) ──────────────────────────────────────────────────
+
+pub fn decode_memory_section(payload: &[u8]) -> Result<Vec<Limits>, ParseError> {
+    let mut pos = 0;
+    let (count, n) = decode_leb128_u32(payload, pos)?;
+    pos += n;
+
+    let mut memories = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        memories.push(read_limits(payload, &mut pos)?);
+    }
+    Ok(memories)
+}
+
 // ── Function section (id = 3) ─────────────────────────────────────────────────
 
 pub fn decode_function_section(payload: &[u8]) -> Result<Vec<u32>, ParseError> {
@@ -285,6 +299,55 @@ pub fn decode_export_section(payload: &[u8]) -> Result<Vec<Export>, ParseError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Memory section ────────────────────────────────────────────────────────
+
+    #[test]
+    fn memory_section_empty() {
+        assert_eq!(decode_memory_section(&[0x00]), Ok(vec![]));
+    }
+
+    #[test]
+    fn memory_section_single_no_max() {
+        // count=1, limits: flag=0x00 min=1
+        let payload = [0x01, 0x00, 0x01];
+        assert_eq!(
+            decode_memory_section(&payload),
+            Ok(vec![Limits { min: 1, max: None }])
+        );
+    }
+
+    #[test]
+    fn memory_section_single_with_max() {
+        // count=1, limits: flag=0x01 min=1 max=4
+        let payload = [0x01, 0x01, 0x01, 0x04];
+        assert_eq!(
+            decode_memory_section(&payload),
+            Ok(vec![Limits { min: 1, max: Some(4) }])
+        );
+    }
+
+    #[test]
+    fn memory_section_multiple() {
+        // count=2, [min=0 no max], [min=2 max=8]
+        let payload = [0x02, 0x00, 0x00, 0x01, 0x02, 0x08];
+        assert_eq!(
+            decode_memory_section(&payload),
+            Ok(vec![
+                Limits { min: 0, max: None },
+                Limits { min: 2, max: Some(8) },
+            ])
+        );
+    }
+
+    #[test]
+    fn memory_section_unknown_limits_flag() {
+        let payload = [0x01, 0x02, 0x01];
+        assert!(matches!(
+            decode_memory_section(&payload),
+            Err(ParseError::UnknownLimitsFlag(0x02))
+        ));
+    }
 
     // ── Import section ────────────────────────────────────────────────────────
 
