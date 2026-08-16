@@ -1,7 +1,9 @@
 use std::process;
 use wasm_runtime::{
     parser::{parse_header, section_iter},
-    sections::{decode_export_section, decode_function_section, decode_type_section},
+    sections::{
+        decode_code_section, decode_export_section, decode_function_section, decode_type_section,
+    },
 };
 
 fn main() {
@@ -72,6 +74,12 @@ fn main() {
                     print!("  ({} exports)", exports.len());
                 }
                 export_payload = Some((hdr.offset, hdr.size));
+            }
+            10 => {
+                let payload = &bytes[hdr.offset..hdr.offset + hdr.size as usize];
+                if let Ok(bodies) = decode_code_section(payload) {
+                    print!("  ({} funcs)", bodies.len());
+                }
             }
             _ => {}
         }

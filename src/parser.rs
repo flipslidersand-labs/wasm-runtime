@@ -15,6 +15,7 @@ pub enum ParseError {
     UnknownLimitsFlag(u8),
     InvalidMutability(u8),
     InvalidUtf8,
+    SizeMismatch,
 }
 
 impl std::fmt::Display for ParseError {
@@ -34,6 +35,9 @@ impl std::fmt::Display for ParseError {
             ParseError::UnknownLimitsFlag(b) => write!(f, "unknown limits flag: {:#04X}", b),
             ParseError::InvalidMutability(b) => write!(f, "invalid mutability byte: {:#04X}", b),
             ParseError::InvalidUtf8 => write!(f, "name is not valid UTF-8"),
+            ParseError::SizeMismatch => {
+                write!(f, "declared function body size does not match payload")
+            }
         }
     }
 }

@@ -294,6 +294,69 @@ pub fn decode_export_section(payload: &[u8]) -> Result<Vec<Export>, ParseError> 
     Ok(exports)
 }
 
+// ── Code section (id = 10) ────────────────────────────────────────────────────
+
+/// A single local variable declaration: `count` locals of the same `valtype`.
+#[derive(Debug, PartialEq, Clone)]
+pub struct LocalDecl {
+    pub count: u32,
+    pub valtype: ValType,
+}
+
+/// The body of a single function: its local declarations and raw expression bytes.
+#[derive(Debug, PartialEq, Clone)]
+pub struct FuncBody {
+    pub locals: Vec<LocalDecl>,
+    pub expr: Vec<u8>,
+}
+
+pub fn decode_code_section(payload: &[u8]) -> Result<Vec<FuncBody>, ParseError> {
+    let mut pos = 0;
+    let (count, n) = decode_leb128_u32(payload, pos)?;
+    pos += n;
+
+    let mut bodies = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let (size, n) = decode_leb128_u32(payload, pos)?;
+        pos += n;
+
+        // The body occupies exactly `size` bytes starting here.
+        let body_end = pos + size as usize;
+        if body_end > payload.len() {
+            return Err(ParseError::SizeMismatch);
+        }
+
+        let (local_count, n) = decode_leb128_u32(payload, pos)?;
+        pos += n;
+
+        let mut locals = Vec::with_capacity(local_count as usize);
+        for _ in 0..local_count {
+            let (cnt, n) = decode_leb128_u32(payload, pos)?;
+            pos += n;
+            if pos >= body_end {
+                return Err(ParseError::SizeMismatch);
+            }
+            let valtype = ValType::try_from(payload[pos])?;
+            pos += 1;
+            locals.push(LocalDecl {
+                count: cnt,
+                valtype,
+            });
+        }
+
+        // Whatever remains inside the body is the expression byte stream.
+        if pos > body_end {
+            return Err(ParseError::SizeMismatch);
+        }
+        let expr = payload[pos..body_end].to_vec();
+        pos = body_end;
+
+        bodies.push(FuncBody { locals, expr });
+    }
+
+    Ok(bodies)
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -323,7 +386,10 @@ mod tests {
         let payload = [0x01, 0x01, 0x01, 0x04];
         assert_eq!(
             decode_memory_section(&payload),
-            Ok(vec![Limits { min: 1, max: Some(4) }])
+            Ok(vec![Limits {
+                min: 1,
+                max: Some(4)
+            }])
         );
     }
 
@@ -335,7 +401,10 @@ mod tests {
             decode_memory_section(&payload),
             Ok(vec![
                 Limits { min: 0, max: None },
-                Limits { min: 2, max: Some(8) },
+                Limits {
+                    min: 2,
+                    max: Some(8)
+                },
             ])
         );
     }
@@ -408,7 +477,10 @@ mod tests {
             Ok(vec![Import {
                 module: "env".to_string(),
                 name: "mem".to_string(),
-                desc: ImportDesc::Memory(Limits { min: 1, max: Some(4) }),
+                desc: ImportDesc::Memory(Limits {
+                    min: 1,
+                    max: Some(4)
+                }),
             }])
         );
     }
@@ -611,5 +683,82 @@ mod tests {
             decode_export_section(&payload),
             Err(ParseError::UnknownExportKind(0xFF))
         ));
+    }
+
+    // ── Code section ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn code_section_empty() {
+        // count = 0
+        assert_eq!(decode_code_section(&[0x00]), Ok(vec![]));
+    }
+
+    #[test]
+    fn code_section_no_locals() {
+        // count=1, body: size=2, local_count=0, expr=[0x0B] (end)
+        let payload = [0x01, 0x02, 0x00, 0x0B];
+        assert_eq!(
+            decode_code_section(&payload),
+            Ok(vec![FuncBody {
+                locals: vec![],
+                expr: vec![0x0B],
+            }])
+        );
+    }
+
+    #[test]
+    fn code_section_with_locals() {
+        // count=1
+        // body size=6: local_count=1, local(count=2, i32=0x7F),
+        //              expr=[0x20,0x00,0x0B] (local.get 0; end)
+        let payload = [0x01, 0x06, 0x01, 0x02, 0x7F, 0x20, 0x00, 0x0B];
+        assert_eq!(
+            decode_code_section(&payload),
+            Ok(vec![FuncBody {
+                locals: vec![LocalDecl {
+                    count: 2,
+                    valtype: ValType::I32,
+                }],
+                expr: vec![0x20, 0x00, 0x0B],
+            }])
+        );
+    }
+
+    #[test]
+    fn code_section_two_bodies() {
+        // count=2, two empty-local bodies each with a single-byte expr
+        let payload = [
+            0x02, // count = 2
+            0x02, 0x00, 0x0B, // body[0]: size=2, no locals, expr=[0x0B]
+            0x02, 0x00, 0x0B, // body[1]: size=2, no locals, expr=[0x0B]
+        ];
+        assert_eq!(
+            decode_code_section(&payload),
+            Ok(vec![
+                FuncBody {
+                    locals: vec![],
+                    expr: vec![0x0B],
+                },
+                FuncBody {
+                    locals: vec![],
+                    expr: vec![0x0B],
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn code_section_size_exceeds_payload() {
+        // count=1, body claims size=10 but only 2 bytes follow
+        let payload = [0x01, 0x0A, 0x00, 0x0B];
+        assert_eq!(decode_code_section(&payload), Err(ParseError::SizeMismatch));
+    }
+
+    #[test]
+    fn code_section_locals_overrun_body() {
+        // count=1, body size=1 but local decl needs a valtype byte past body_end
+        // size=1 covers only local_count byte; reading the local's valtype overruns.
+        let payload = [0x01, 0x01, 0x01, 0x02, 0x7F];
+        assert_eq!(decode_code_section(&payload), Err(ParseError::SizeMismatch));
     }
 }
