@@ -478,7 +478,8 @@ fn skip_leb128(payload: &[u8], pos: &mut usize) -> Result<(), ParseError> {
 
 /// Reads a constant initializer expression, returning its raw bytes including the
 /// terminating `0x0B`. Supports the constant instructions valid in a global
-/// init_expr: `i32/i64/f32/f64.const` and `global.get`.
+/// init_expr / element offset / element expr: `i32/i64/f32/f64.const`,
+/// `global.get`, `ref.func` and `ref.null`.
 fn read_init_expr(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError> {
     let start = *pos;
     loop {
@@ -492,6 +493,8 @@ fn read_init_expr(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError
             0x41 | 0x42 | 0x23 => skip_leb128(payload, pos)?, // i32/i64.const, global.get
             0x43 => advance(payload, pos, 4)?,                // f32.const
             0x44 => advance(payload, pos, 8)?,                // f64.const
+            0xD2 => skip_leb128(payload, pos)?,               // ref.func funcidx
+            0xD0 => advance(payload, pos, 1)?,                // ref.null heaptype
             _ => return Err(ParseError::UnsupportedInitExpr(op)),
         }
     }
@@ -663,16 +666,36 @@ pub fn decode_data_section(payload: &[u8]) -> Result<Vec<DataSegment>, ParseErro
 
 // ── Element section (id = 9) ──────────────────────────────────────────────────
 
-/// An element segment: initializes a range of a table with function references.
-///
-/// Only the most common `flag = 0` form is decoded (active, table 0, funcref, a
-/// vector of function indices). `offset_expr` holds the raw const-expr bytes
-/// (including the trailing `0x0B`).
+/// How an element segment is placed. `Active` segments copy their elements into
+/// `table[table_index]` at `offset_expr` during instantiation; `Passive` and
+/// `Declarative` are referenced later (`table.init`) or used only for validation.
+/// `offset_expr` holds the raw const-expr bytes (including the trailing `0x0B`).
+#[derive(Debug, PartialEq, Clone)]
+pub enum ElementMode {
+    Active {
+        table_index: u32,
+        offset_expr: Vec<u8>,
+    },
+    Passive,
+    Declarative,
+}
+
+/// The element list of a segment: either a vector of function indices (flags
+/// 0..=3) or a vector of raw const-expr byte streams (flags 4..=7, each including
+/// its trailing `0x0B`).
+#[derive(Debug, PartialEq, Clone)]
+pub enum ElementInit {
+    FuncIndices(Vec<u32>),
+    Exprs(Vec<Vec<u8>>),
+}
+
+/// An element segment (spec §5.5.12). Covers all eight binary encodings (flag
+/// 0..=7); flags ≥ 8 are rejected with [`ParseError::UnsupportedElementFlag`].
 #[derive(Debug, PartialEq, Clone)]
 pub struct ElementSegment {
-    pub table_index: u32,
-    pub offset_expr: Vec<u8>,
-    pub func_indices: Vec<u32>,
+    pub mode: ElementMode,
+    pub reftype: RefType,
+    pub init: ElementInit,
 }
 
 /// Reads a `count`-prefixed vector of LEB128 u32 values, advancing `*pos`.
@@ -688,6 +711,41 @@ fn read_u32_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u32>, ParseError>
     Ok(out)
 }
 
+/// Reads a `count`-prefixed vector of const-expr byte streams (element exprs).
+fn read_expr_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<Vec<u8>>, ParseError> {
+    let (count, n) = decode_leb128_u32(payload, *pos)?;
+    *pos += n;
+    let mut out = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        out.push(read_init_expr(payload, pos)?);
+    }
+    Ok(out)
+}
+
+/// Reads an `elemkind` byte, which must be `0x00` (funcref); anything else is
+/// rejected as an unknown reference type.
+fn read_elemkind(payload: &[u8], pos: &mut usize) -> Result<RefType, ParseError> {
+    if *pos >= payload.len() {
+        return Err(ParseError::UnexpectedEof);
+    }
+    let byte = payload[*pos];
+    *pos += 1;
+    match byte {
+        0x00 => Ok(RefType::FuncRef),
+        _ => Err(ParseError::UnknownRefType(byte)),
+    }
+}
+
+/// Reads a single `reftype` byte (`0x70` funcref / `0x6F` externref).
+fn read_reftype(payload: &[u8], pos: &mut usize) -> Result<RefType, ParseError> {
+    if *pos >= payload.len() {
+        return Err(ParseError::UnexpectedEof);
+    }
+    let reftype = RefType::try_from(payload[*pos])?;
+    *pos += 1;
+    Ok(reftype)
+}
+
 pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, ParseError> {
     let mut pos = 0;
     let (count, n) = decode_leb128_u32(payload, pos)?;
@@ -698,21 +756,112 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
         let (flag, n) = decode_leb128_u32(payload, pos)?;
         pos += n;
 
-        match flag {
-            // active, table 0, offset_expr followed by a funcidx vector
+        // The three low bits select the encoding: bit0 = passive/declarative,
+        // bit1 = explicit-table (active) or declarative selector, bit2 = the
+        // element list is a vector of exprs instead of funcidxs.
+        let seg = match flag {
+            // active, table 0, funcidx vector
             0 => {
                 let offset_expr = read_init_expr(payload, &mut pos)?;
                 let func_indices = read_u32_vec(payload, &mut pos)?;
-                segments.push(ElementSegment {
-                    table_index: 0,
-                    offset_expr,
-                    func_indices,
-                });
+                ElementSegment {
+                    mode: ElementMode::Active {
+                        table_index: 0,
+                        offset_expr,
+                    },
+                    reftype: RefType::FuncRef,
+                    init: ElementInit::FuncIndices(func_indices),
+                }
             }
-            // flags 1..=7 (passive/declarative/explicit-table/elemkind/typed) are
-            // not yet supported; reject rather than silently misread.
+            // passive, elemkind + funcidx vector
+            1 => {
+                let reftype = read_elemkind(payload, &mut pos)?;
+                let func_indices = read_u32_vec(payload, &mut pos)?;
+                ElementSegment {
+                    mode: ElementMode::Passive,
+                    reftype,
+                    init: ElementInit::FuncIndices(func_indices),
+                }
+            }
+            // active, explicit table, elemkind + funcidx vector
+            2 => {
+                let (table_index, n) = decode_leb128_u32(payload, pos)?;
+                pos += n;
+                let offset_expr = read_init_expr(payload, &mut pos)?;
+                let reftype = read_elemkind(payload, &mut pos)?;
+                let func_indices = read_u32_vec(payload, &mut pos)?;
+                ElementSegment {
+                    mode: ElementMode::Active {
+                        table_index,
+                        offset_expr,
+                    },
+                    reftype,
+                    init: ElementInit::FuncIndices(func_indices),
+                }
+            }
+            // declarative, elemkind + funcidx vector
+            3 => {
+                let reftype = read_elemkind(payload, &mut pos)?;
+                let func_indices = read_u32_vec(payload, &mut pos)?;
+                ElementSegment {
+                    mode: ElementMode::Declarative,
+                    reftype,
+                    init: ElementInit::FuncIndices(func_indices),
+                }
+            }
+            // active, table 0, expr vector (funcref implied)
+            4 => {
+                let offset_expr = read_init_expr(payload, &mut pos)?;
+                let exprs = read_expr_vec(payload, &mut pos)?;
+                ElementSegment {
+                    mode: ElementMode::Active {
+                        table_index: 0,
+                        offset_expr,
+                    },
+                    reftype: RefType::FuncRef,
+                    init: ElementInit::Exprs(exprs),
+                }
+            }
+            // passive, reftype + expr vector
+            5 => {
+                let reftype = read_reftype(payload, &mut pos)?;
+                let exprs = read_expr_vec(payload, &mut pos)?;
+                ElementSegment {
+                    mode: ElementMode::Passive,
+                    reftype,
+                    init: ElementInit::Exprs(exprs),
+                }
+            }
+            // active, explicit table, reftype + expr vector
+            6 => {
+                let (table_index, n) = decode_leb128_u32(payload, pos)?;
+                pos += n;
+                let offset_expr = read_init_expr(payload, &mut pos)?;
+                let reftype = read_reftype(payload, &mut pos)?;
+                let exprs = read_expr_vec(payload, &mut pos)?;
+                ElementSegment {
+                    mode: ElementMode::Active {
+                        table_index,
+                        offset_expr,
+                    },
+                    reftype,
+                    init: ElementInit::Exprs(exprs),
+                }
+            }
+            // declarative, reftype + expr vector
+            7 => {
+                let reftype = read_reftype(payload, &mut pos)?;
+                let exprs = read_expr_vec(payload, &mut pos)?;
+                ElementSegment {
+                    mode: ElementMode::Declarative,
+                    reftype,
+                    init: ElementInit::Exprs(exprs),
+                }
+            }
+            // flags ≥ 8 are undefined; reject rather than silently misread.
             _ => return Err(ParseError::UnsupportedElementFlag(flag as u8)),
-        }
+        };
+        segments.push(seg);
     }
     Ok(segments)
 }
@@ -889,19 +1038,31 @@ impl fmt::Display for DataSegment {
 
 impl fmt::Display for ElementSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let funcs = self
-            .func_indices
-            .iter()
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        write!(
-            f,
-            "active table[{}] offset={} funcs=[{}]",
-            self.table_index,
-            fmt_init_expr(&self.offset_expr),
-            funcs
-        )
+        match &self.mode {
+            ElementMode::Active {
+                table_index,
+                offset_expr,
+            } => write!(
+                f,
+                "active table[{}] offset={} ",
+                table_index,
+                fmt_init_expr(offset_expr)
+            )?,
+            ElementMode::Passive => write!(f, "passive ")?,
+            ElementMode::Declarative => write!(f, "declarative ")?,
+        }
+        write!(f, "{} ", self.reftype)?;
+        match &self.init {
+            ElementInit::FuncIndices(indices) => {
+                let funcs = indices
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "funcs=[{}]", funcs)
+            }
+            ElementInit::Exprs(exprs) => write!(f, "exprs={}", exprs.len()),
+        }
     }
 }
 
@@ -1775,39 +1936,39 @@ mod tests {
         assert_eq!(decode_element_section(&[0x00]), Ok(vec![]));
     }
 
+    fn active0(offset: Vec<u8>, funcs: Vec<u32>) -> ElementSegment {
+        ElementSegment {
+            mode: ElementMode::Active {
+                table_index: 0,
+                offset_expr: offset,
+            },
+            reftype: RefType::FuncRef,
+            init: ElementInit::FuncIndices(funcs),
+        }
+    }
+
     #[test]
     fn element_section_active_flag0_single_func() {
-        // count=1, flag=0, offset_expr=i32.const 0 end (0x41 0x00 0x0B),
-        // func_idx_vec: count=1 [0x00]
+        // flag=0, offset=i32.const 0 end, funcvec [0]
         let payload = [0x01, 0x00, 0x41, 0x00, 0x0B, 0x01, 0x00];
         assert_eq!(
             decode_element_section(&payload),
-            Ok(vec![ElementSegment {
-                table_index: 0,
-                offset_expr: vec![0x41, 0x00, 0x0B],
-                func_indices: vec![0],
-            }])
+            Ok(vec![active0(vec![0x41, 0x00, 0x0B], vec![0])])
         );
     }
 
     #[test]
     fn element_section_multiple_func_indices() {
-        // count=1, flag=0, offset_expr=i32.const 1 end (0x41 0x01 0x0B),
-        // func_idx_vec: count=3 [0,2,1]
+        // flag=0, offset=i32.const 1 end, funcvec [0,2,1]
         let payload = [0x01, 0x00, 0x41, 0x01, 0x0B, 0x03, 0x00, 0x02, 0x01];
         assert_eq!(
             decode_element_section(&payload),
-            Ok(vec![ElementSegment {
-                table_index: 0,
-                offset_expr: vec![0x41, 0x01, 0x0B],
-                func_indices: vec![0, 2, 1],
-            }])
+            Ok(vec![active0(vec![0x41, 0x01, 0x0B], vec![0, 2, 1])])
         );
     }
 
     #[test]
     fn element_section_two_segments() {
-        // count=2: [offset i32.const 0, funcs [0]], [offset i32.const 4, funcs [1,2]]
         let payload = [
             0x02, // count = 2
             0x00, 0x41, 0x00, 0x0B, 0x01, 0x00, // seg 0
@@ -1816,27 +1977,139 @@ mod tests {
         assert_eq!(
             decode_element_section(&payload),
             Ok(vec![
-                ElementSegment {
-                    table_index: 0,
-                    offset_expr: vec![0x41, 0x00, 0x0B],
-                    func_indices: vec![0],
-                },
-                ElementSegment {
-                    table_index: 0,
-                    offset_expr: vec![0x41, 0x04, 0x0B],
-                    func_indices: vec![1, 2],
-                },
+                active0(vec![0x41, 0x00, 0x0B], vec![0]),
+                active0(vec![0x41, 0x04, 0x0B], vec![1, 2]),
             ])
         );
     }
 
     #[test]
-    fn element_section_unsupported_flag() {
-        // flag=1 (passive) is not yet supported
-        let payload = [0x01, 0x01];
+    fn element_section_flag1_passive_funcidx() {
+        // flag=1, elemkind=funcref(0x00), funcvec [5]
+        let payload = [0x01, 0x01, 0x00, 0x01, 0x05];
         assert_eq!(
             decode_element_section(&payload),
-            Err(ParseError::UnsupportedElementFlag(0x01))
+            Ok(vec![ElementSegment {
+                mode: ElementMode::Passive,
+                reftype: RefType::FuncRef,
+                init: ElementInit::FuncIndices(vec![5]),
+            }])
+        );
+    }
+
+    #[test]
+    fn element_section_flag2_active_explicit_table() {
+        // flag=2, tableidx=1, offset=i32.const 0 end, elemkind=0x00, funcvec [0]
+        let payload = [0x01, 0x02, 0x01, 0x41, 0x00, 0x0B, 0x00, 0x01, 0x00];
+        assert_eq!(
+            decode_element_section(&payload),
+            Ok(vec![ElementSegment {
+                mode: ElementMode::Active {
+                    table_index: 1,
+                    offset_expr: vec![0x41, 0x00, 0x0B],
+                },
+                reftype: RefType::FuncRef,
+                init: ElementInit::FuncIndices(vec![0]),
+            }])
+        );
+    }
+
+    #[test]
+    fn element_section_flag3_declarative() {
+        // flag=3, elemkind=0x00, funcvec [0,1]
+        let payload = [0x01, 0x03, 0x00, 0x02, 0x00, 0x01];
+        assert_eq!(
+            decode_element_section(&payload),
+            Ok(vec![ElementSegment {
+                mode: ElementMode::Declarative,
+                reftype: RefType::FuncRef,
+                init: ElementInit::FuncIndices(vec![0, 1]),
+            }])
+        );
+    }
+
+    #[test]
+    fn element_section_flag4_active_exprs() {
+        // flag=4, offset=i32.const 0 end, exprvec [ref.func 3 end]
+        let payload = [0x01, 0x04, 0x41, 0x00, 0x0B, 0x01, 0xD2, 0x03, 0x0B];
+        assert_eq!(
+            decode_element_section(&payload),
+            Ok(vec![ElementSegment {
+                mode: ElementMode::Active {
+                    table_index: 0,
+                    offset_expr: vec![0x41, 0x00, 0x0B],
+                },
+                reftype: RefType::FuncRef,
+                init: ElementInit::Exprs(vec![vec![0xD2, 0x03, 0x0B]]),
+            }])
+        );
+    }
+
+    #[test]
+    fn element_section_flag5_passive_exprs_externref() {
+        // flag=5, reftype=externref(0x6F), exprvec [ref.null extern end]
+        let payload = [0x01, 0x05, 0x6F, 0x01, 0xD0, 0x6F, 0x0B];
+        assert_eq!(
+            decode_element_section(&payload),
+            Ok(vec![ElementSegment {
+                mode: ElementMode::Passive,
+                reftype: RefType::ExternRef,
+                init: ElementInit::Exprs(vec![vec![0xD0, 0x6F, 0x0B]]),
+            }])
+        );
+    }
+
+    #[test]
+    fn element_section_flag6_active_explicit_exprs() {
+        // flag=6, tableidx=0, offset=i32.const 0 end, reftype=funcref(0x70),
+        // exprvec [ref.func 0 end]
+        let payload = [
+            0x01, 0x06, 0x00, 0x41, 0x00, 0x0B, 0x70, 0x01, 0xD2, 0x00, 0x0B,
+        ];
+        assert_eq!(
+            decode_element_section(&payload),
+            Ok(vec![ElementSegment {
+                mode: ElementMode::Active {
+                    table_index: 0,
+                    offset_expr: vec![0x41, 0x00, 0x0B],
+                },
+                reftype: RefType::FuncRef,
+                init: ElementInit::Exprs(vec![vec![0xD2, 0x00, 0x0B]]),
+            }])
+        );
+    }
+
+    #[test]
+    fn element_section_flag7_declarative_exprs() {
+        // flag=7, reftype=funcref(0x70), exprvec [ref.func 0 end]
+        let payload = [0x01, 0x07, 0x70, 0x01, 0xD2, 0x00, 0x0B];
+        assert_eq!(
+            decode_element_section(&payload),
+            Ok(vec![ElementSegment {
+                mode: ElementMode::Declarative,
+                reftype: RefType::FuncRef,
+                init: ElementInit::Exprs(vec![vec![0xD2, 0x00, 0x0B]]),
+            }])
+        );
+    }
+
+    #[test]
+    fn element_section_invalid_elemkind() {
+        // flag=1 with elemkind byte 0x99 (not funcref)
+        let payload = [0x01, 0x01, 0x99];
+        assert_eq!(
+            decode_element_section(&payload),
+            Err(ParseError::UnknownRefType(0x99))
+        );
+    }
+
+    #[test]
+    fn element_section_unsupported_flag() {
+        // flag=8 is undefined
+        let payload = [0x01, 0x08];
+        assert_eq!(
+            decode_element_section(&payload),
+            Err(ParseError::UnsupportedElementFlag(0x08))
         );
     }
 
@@ -1851,13 +2124,22 @@ mod tests {
     }
 
     #[test]
-    fn display_element_segment() {
+    fn display_element_segment_active_funcs() {
+        let seg = active0(vec![0x41, 0x00, 0x0B], vec![0, 2, 1]);
+        assert_eq!(
+            seg.to_string(),
+            "active table[0] offset=0 funcref funcs=[0, 2, 1]"
+        );
+    }
+
+    #[test]
+    fn display_element_segment_passive_exprs() {
         let seg = ElementSegment {
-            table_index: 0,
-            offset_expr: vec![0x41, 0x00, 0x0B],
-            func_indices: vec![0, 2, 1],
+            mode: ElementMode::Passive,
+            reftype: RefType::ExternRef,
+            init: ElementInit::Exprs(vec![vec![0xD0, 0x6F, 0x0B]]),
         };
-        assert_eq!(seg.to_string(), "active table[0] offset=0 funcs=[0, 2, 1]");
+        assert_eq!(seg.to_string(), "passive externref exprs=1");
     }
 
     // ── const expr ───────────────────────────────────────────────────────────

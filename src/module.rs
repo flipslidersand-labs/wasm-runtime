@@ -9,8 +9,8 @@ use crate::sections::{
     decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
     decode_element_section, decode_export_section, decode_function_section, decode_global_section,
     decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
-    decode_type_section, CustomSection, DataSegment, ElementSegment, Export, ExportKind, FuncBody,
-    FuncType, Global, Import, ImportDesc, Limits, Table,
+    decode_type_section, CustomSection, DataSegment, ElementInit, ElementMode, ElementSegment,
+    Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits, Table,
 };
 use std::fmt;
 
@@ -221,21 +221,26 @@ impl Module {
             }
         }
 
-        // 4. element segments must target an existing table and reference funcs
-        //    that fall within the (imports + defined) function space.
+        // 4. active element segments must target an existing table; funcidx-form
+        //    element lists must reference funcs within the function space.
+        //    (expr-form element lists are not range-checked here.)
         for element in &self.elements {
-            if element.table_index as usize >= table_space {
-                return Err(ValidationError::ElementTableIndexOutOfRange {
-                    index: element.table_index,
-                    table_space,
-                });
-            }
-            for &func_index in &element.func_indices {
-                if func_index as usize >= func_space {
-                    return Err(ValidationError::ElementFuncIndexOutOfRange {
-                        index: func_index,
-                        func_space,
+            if let ElementMode::Active { table_index, .. } = &element.mode {
+                if *table_index as usize >= table_space {
+                    return Err(ValidationError::ElementTableIndexOutOfRange {
+                        index: *table_index,
+                        table_space,
                     });
+                }
+            }
+            if let ElementInit::FuncIndices(indices) = &element.init {
+                for &func_index in indices {
+                    if func_index as usize >= func_space {
+                        return Err(ValidationError::ElementFuncIndexOutOfRange {
+                            index: func_index,
+                            func_space,
+                        });
+                    }
                 }
             }
         }
@@ -426,9 +431,12 @@ mod tests {
 
     fn elem_seg(func_indices: Vec<u32>) -> ElementSegment {
         ElementSegment {
-            table_index: 0,
-            offset_expr: vec![0x41, 0x00, 0x0B],
-            func_indices,
+            mode: ElementMode::Active {
+                table_index: 0,
+                offset_expr: vec![0x41, 0x00, 0x0B],
+            },
+            reftype: crate::sections::RefType::FuncRef,
+            init: ElementInit::FuncIndices(func_indices),
         }
     }
 
