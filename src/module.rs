@@ -8,8 +8,8 @@ use crate::parser::{parse_header, section_iter, ParseError};
 use crate::sections::{
     decode_code_section, decode_data_section, decode_element_section, decode_export_section,
     decode_function_section, decode_global_section, decode_import_section, decode_memory_section,
-    decode_table_section, decode_type_section, DataSegment, ElementSegment, Export, ExportKind,
-    FuncBody, FuncType, Global, Import, ImportDesc, Limits, Table,
+    decode_start_section, decode_table_section, decode_type_section, DataSegment, ElementSegment,
+    Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits, Table,
 };
 use std::fmt;
 
@@ -26,6 +26,8 @@ pub struct Module {
     pub memories: Vec<Limits>,
     pub globals: Vec<Global>,
     pub exports: Vec<Export>,
+    /// Start section: index of the module's entry-point function, if present.
+    pub start: Option<u32>,
     /// Element section: table-initializer segments (flag 0 only).
     pub elements: Vec<ElementSegment>,
     /// Code section: one body per locally-defined function.
@@ -52,6 +54,7 @@ pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
             5 => module.memories = decode_memory_section(payload)?,
             6 => module.globals = decode_global_section(payload)?,
             7 => module.exports = decode_export_section(payload)?,
+            8 => module.start = Some(decode_start_section(payload)?),
             9 => module.elements = decode_element_section(payload)?,
             10 => module.code = decode_code_section(payload)?,
             11 => module.data = decode_data_section(payload)?,
@@ -82,6 +85,8 @@ pub enum ValidationError {
     ElementTableIndexOutOfRange { index: u32, table_space: usize },
     /// An element segment references a function beyond the function space.
     ElementFuncIndexOutOfRange { index: u32, func_space: usize },
+    /// The start section names a function beyond the function space.
+    StartFuncIndexOutOfRange { index: u32, func_space: usize },
 }
 
 impl fmt::Display for ValidationError {
@@ -115,6 +120,11 @@ impl fmt::Display for ValidationError {
             ValidationError::ElementFuncIndexOutOfRange { index, func_space } => write!(
                 f,
                 "element func index {} out of range (func space {})",
+                index, func_space
+            ),
+            ValidationError::StartFuncIndexOutOfRange { index, func_space } => write!(
+                f,
+                "start func index {} out of range (func space {})",
                 index, func_space
             ),
         }
@@ -213,6 +223,13 @@ impl Module {
                         func_space,
                     });
                 }
+            }
+        }
+
+        // 5. the start function, if any, must fall within the function space.
+        if let Some(index) = self.start {
+            if index as usize >= func_space {
+                return Err(ValidationError::StartFuncIndexOutOfRange { index, func_space });
             }
         }
 
@@ -454,6 +471,50 @@ mod tests {
         bytes.extend_from_slice(&[0x09, 0x07, 0x01, 0x00, 0x41, 0x00, 0x0B, 0x01, 0x00]); // element
         let module = parse_module(&bytes).unwrap();
         assert_eq!(module.elements, vec![elem_seg(vec![0])]);
+    }
+
+    #[test]
+    fn start_func_index_in_range() {
+        // 1 defined func (space 1); start naming func 0 is valid.
+        let module = Module {
+            types: vec![func_type()],
+            functions: vec![0],
+            code: vec![empty_body()],
+            start: Some(0),
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
+    }
+
+    #[test]
+    fn start_func_index_out_of_range() {
+        let module = Module {
+            types: vec![func_type()],
+            functions: vec![0],
+            code: vec![empty_body()],
+            start: Some(3),
+            ..Module::default()
+        };
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::StartFuncIndexOutOfRange {
+                index: 3,
+                func_space: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_module_aggregates_start_section() {
+        // header + type + func + start(func 0) + code
+        let mut bytes = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        bytes.extend_from_slice(&[0x01, 0x04, 0x01, 0x60, 0x00, 0x00]); // type
+        bytes.extend_from_slice(&[0x03, 0x02, 0x01, 0x00]); // function
+        bytes.extend_from_slice(&[0x08, 0x01, 0x00]); // start: func 0
+        bytes.extend_from_slice(&[0x0A, 0x04, 0x01, 0x02, 0x00, 0x0B]); // code
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(module.start, Some(0));
+        assert_eq!(module.validate(), Ok(()));
     }
 
     #[test]

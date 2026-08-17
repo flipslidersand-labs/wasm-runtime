@@ -5,7 +5,7 @@ use wasm_runtime::{
     sections::{
         decode_code_section, decode_data_section, decode_element_section, decode_export_section,
         decode_function_section, decode_global_section, decode_import_section,
-        decode_memory_section, decode_table_section, decode_type_section,
+        decode_memory_section, decode_start_section, decode_table_section, decode_type_section,
     },
 };
 
@@ -65,6 +65,11 @@ fn main() {
             5 => print_count(decode_memory_section(payload).map(|v| v.len()), "mems"),
             6 => print_count(decode_global_section(payload).map(|v| v.len()), "globals"),
             7 => print_count(decode_export_section(payload).map(|v| v.len()), "exports"),
+            8 => {
+                if let Ok(idx) = decode_start_section(payload) {
+                    print!("  (func {})", idx);
+                }
+            }
             9 => print_count(decode_element_section(payload).map(|v| v.len()), "elems"),
             10 => print_count(decode_code_section(payload).map(|v| v.len()), "funcs"),
             11 => print_count(decode_data_section(payload).map(|v| v.len()), "data"),
@@ -129,6 +134,10 @@ fn print_verbose(bytes: &[u8]) {
             5 => print_entries(decode_memory_section(payload)),
             6 => print_entries(decode_global_section(payload)),
             7 => print_entries(decode_export_section(payload)),
+            8 => match decode_start_section(payload) {
+                Ok(idx) => println!("  start: func[{}]", idx),
+                Err(e) => println!("  <decode error: {}>", e),
+            },
             9 => print_entries(decode_element_section(payload)),
             10 => print_entries(decode_code_section(payload)),
             11 => print_entries(decode_data_section(payload)),

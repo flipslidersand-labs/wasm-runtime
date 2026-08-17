@@ -248,6 +248,18 @@ pub fn decode_function_section(payload: &[u8]) -> Result<Vec<u32>, ParseError> {
     Ok(indices)
 }
 
+// ── Start section (id = 8) ────────────────────────────────────────────────────
+
+/// Decodes the start section: a single function index naming the module's entry
+/// point. The payload must contain exactly that index and no trailing bytes.
+pub fn decode_start_section(payload: &[u8]) -> Result<u32, ParseError> {
+    let (func_index, n) = decode_leb128_u32(payload, 0)?;
+    if n != payload.len() {
+        return Err(ParseError::SizeMismatch);
+    }
+    Ok(func_index)
+}
+
 // ── Export section (id = 7) ───────────────────────────────────────────────────
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -1134,6 +1146,34 @@ mod tests {
         // count=3, indices=[0,1,0]
         let payload = [0x03, 0x00, 0x01, 0x00];
         assert_eq!(decode_function_section(&payload), Ok(vec![0, 1, 0]));
+    }
+
+    // ── Start section ────────────────────────────────────────────────────────
+
+    #[test]
+    fn start_section_single_byte_index() {
+        assert_eq!(decode_start_section(&[0x00]), Ok(0));
+        assert_eq!(decode_start_section(&[0x2A]), Ok(42));
+    }
+
+    #[test]
+    fn start_section_multibyte_index() {
+        // 0x80 0x01 = LEB128 for 128
+        assert_eq!(decode_start_section(&[0x80, 0x01]), Ok(128));
+    }
+
+    #[test]
+    fn start_section_trailing_bytes_rejected() {
+        // funcidx=0 but an extra byte follows: not a well-formed start section
+        assert_eq!(
+            decode_start_section(&[0x00, 0xFF]),
+            Err(ParseError::SizeMismatch)
+        );
+    }
+
+    #[test]
+    fn start_section_empty_payload() {
+        assert_eq!(decode_start_section(&[]), Err(ParseError::UnexpectedEof));
     }
 
     // ── Export section ─────────────────────────────────────────────────────────
