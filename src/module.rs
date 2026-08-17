@@ -6,11 +6,11 @@
 
 use crate::parser::{parse_header, section_iter, ParseError};
 use crate::sections::{
-    decode_code_section, decode_data_section, decode_datacount_section, decode_element_section,
-    decode_export_section, decode_function_section, decode_global_section, decode_import_section,
-    decode_memory_section, decode_start_section, decode_table_section, decode_type_section,
-    DataSegment, ElementSegment, Export, ExportKind, FuncBody, FuncType, Global, Import,
-    ImportDesc, Limits, Table,
+    decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
+    decode_element_section, decode_export_section, decode_function_section, decode_global_section,
+    decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
+    decode_type_section, CustomSection, DataSegment, ElementSegment, Export, ExportKind, FuncBody,
+    FuncType, Global, Import, ImportDesc, Limits, Table,
 };
 use std::fmt;
 
@@ -19,6 +19,8 @@ use std::fmt;
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Module {
     pub version: u32,
+    /// Custom sections (id 0): tooling metadata. May appear multiple times.
+    pub customs: Vec<CustomSection>,
     pub types: Vec<FuncType>,
     pub imports: Vec<Import>,
     /// Function section: one type index per locally-defined function.
@@ -50,6 +52,7 @@ pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
         let hdr = result?;
         let payload = &bytes[hdr.offset..hdr.offset + hdr.size as usize];
         match hdr.id {
+            0 => module.customs.push(decode_custom_section(payload)?),
             1 => module.types = decode_type_section(payload)?,
             2 => module.imports = decode_import_section(payload)?,
             3 => module.functions = decode_function_section(payload)?,
@@ -62,7 +65,7 @@ pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
             10 => module.code = decode_code_section(payload)?,
             11 => module.data = decode_data_section(payload)?,
             12 => module.data_count = Some(decode_datacount_section(payload)?),
-            _ => {} // custom: not yet aggregated
+            _ => {} // unknown section id: skipped
         }
     }
 
@@ -580,6 +583,30 @@ mod tests {
         let module = parse_module(&bytes).unwrap();
         assert_eq!(module.data_count, Some(1));
         assert_eq!(module.data.len(), 1);
+        assert_eq!(module.validate(), Ok(()));
+    }
+
+    #[test]
+    fn parse_module_aggregates_custom_sections() {
+        // header + two custom sections ("a" with [0x01], "bc" with no payload)
+        let mut bytes = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        bytes.extend_from_slice(&[0x00, 0x03, 0x01, b'a', 0x01]); // custom "a" payload [0x01]
+        bytes.extend_from_slice(&[0x00, 0x03, 0x02, b'b', b'c']); // custom "bc" empty payload
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(
+            module.customs,
+            vec![
+                CustomSection {
+                    name: "a".to_string(),
+                    bytes: vec![0x01],
+                },
+                CustomSection {
+                    name: "bc".to_string(),
+                    bytes: vec![],
+                },
+            ]
+        );
+        // custom sections carry no consistency constraints.
         assert_eq!(module.validate(), Ok(()));
     }
 

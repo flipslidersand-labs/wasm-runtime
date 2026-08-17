@@ -3,10 +3,10 @@ use wasm_runtime::{
     module::parse_module,
     parser::{parse_header, section_iter, ParseError},
     sections::{
-        decode_code_section, decode_data_section, decode_datacount_section, decode_element_section,
-        decode_export_section, decode_function_section, decode_global_section,
-        decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
-        decode_type_section,
+        decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
+        decode_element_section, decode_export_section, decode_function_section,
+        decode_global_section, decode_import_section, decode_memory_section, decode_start_section,
+        decode_table_section, decode_type_section,
     },
 };
 
@@ -59,6 +59,11 @@ fn main() {
             hdr.size
         );
         match hdr.id {
+            0 => {
+                if let Ok(c) = decode_custom_section(payload) {
+                    print!("  (name \"{}\")", c.name);
+                }
+            }
             1 => print_count(decode_type_section(payload).map(|v| v.len()), "types"),
             2 => print_count(decode_import_section(payload).map(|v| v.len()), "imports"),
             3 => print_count(decode_function_section(payload).map(|v| v.len()), "funcs"),
@@ -126,6 +131,10 @@ fn print_verbose(bytes: &[u8]) {
         );
 
         match hdr.id {
+            0 => match decode_custom_section(payload) {
+                Ok(c) => println!("  {}", c),
+                Err(e) => println!("  <decode error: {}>", e),
+            },
             1 => print_entries(decode_type_section(payload)),
             2 => print_entries(decode_import_section(payload)),
             3 => match decode_function_section(payload) {

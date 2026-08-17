@@ -191,6 +191,27 @@ pub fn decode_import_section(payload: &[u8]) -> Result<Vec<Import>, ParseError> 
     Ok(imports)
 }
 
+// ── Custom section (id = 0) ───────────────────────────────────────────────────
+
+/// A custom section: a name followed by an opaque payload. Custom sections
+/// carry tooling metadata (e.g. the `name` section, `producers`) and impose no
+/// consistency constraints on the module. Multiple may appear in one module.
+#[derive(Debug, PartialEq, Clone)]
+pub struct CustomSection {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Decodes a custom section: a name string followed by the remaining bytes as an
+/// opaque payload (whose meaning depends on `name`). The `name` section body is
+/// left undecoded here.
+pub fn decode_custom_section(payload: &[u8]) -> Result<CustomSection, ParseError> {
+    let mut pos = 0;
+    let name = read_name(payload, &mut pos)?;
+    let bytes = payload[pos..].to_vec();
+    Ok(CustomSection { name, bytes })
+}
+
 // ── Memory section (id = 5) ──────────────────────────────────────────────────
 
 pub fn decode_memory_section(payload: &[u8]) -> Result<Vec<Limits>, ParseError> {
@@ -884,6 +905,17 @@ impl fmt::Display for ElementSegment {
     }
 }
 
+impl fmt::Display for CustomSection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "name=\"{}\" payload={} bytes",
+            self.name,
+            self.bytes.len()
+        )
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1218,6 +1250,65 @@ mod tests {
             decode_datacount_section(&[]),
             Err(ParseError::UnexpectedEof)
         );
+    }
+
+    // ── Custom section ───────────────────────────────────────────────────────
+
+    #[test]
+    fn custom_section_name_and_payload() {
+        // name="name"(4 bytes) + payload [0x01,0x02,0x03]
+        let mut payload = vec![0x04];
+        payload.extend_from_slice(b"name");
+        payload.extend_from_slice(&[0x01, 0x02, 0x03]);
+        assert_eq!(
+            decode_custom_section(&payload),
+            Ok(CustomSection {
+                name: "name".to_string(),
+                bytes: vec![0x01, 0x02, 0x03],
+            })
+        );
+    }
+
+    #[test]
+    fn custom_section_empty_payload_after_name() {
+        // name="x"(1 byte), no trailing payload bytes
+        let payload = [0x01, b'x'];
+        assert_eq!(
+            decode_custom_section(&payload),
+            Ok(CustomSection {
+                name: "x".to_string(),
+                bytes: vec![],
+            })
+        );
+    }
+
+    #[test]
+    fn custom_section_name_length_overruns() {
+        // name len=5 but only 2 bytes follow
+        let payload = [0x05, b'a', b'b'];
+        assert_eq!(
+            decode_custom_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn custom_section_invalid_utf8_name() {
+        // name len=1 with a non-UTF8 byte
+        let payload = [0x01, 0xFF];
+        assert_eq!(
+            decode_custom_section(&payload),
+            Err(ParseError::InvalidUtf8)
+        );
+    }
+
+    #[test]
+    fn display_custom_section() {
+        let c = CustomSection {
+            name: "producers".to_string(),
+            bytes: vec![0xAA, 0xBB],
+        };
+        assert_eq!(c.to_string(), "name=\"producers\" payload=2 bytes");
     }
 
     // ── Export section ─────────────────────────────────────────────────────────
