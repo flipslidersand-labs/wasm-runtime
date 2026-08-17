@@ -6,10 +6,11 @@
 
 use crate::parser::{parse_header, section_iter, ParseError};
 use crate::sections::{
-    decode_code_section, decode_data_section, decode_element_section, decode_export_section,
-    decode_function_section, decode_global_section, decode_import_section, decode_memory_section,
-    decode_start_section, decode_table_section, decode_type_section, DataSegment, ElementSegment,
-    Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits, Table,
+    decode_code_section, decode_data_section, decode_datacount_section, decode_element_section,
+    decode_export_section, decode_function_section, decode_global_section, decode_import_section,
+    decode_memory_section, decode_start_section, decode_table_section, decode_type_section,
+    DataSegment, ElementSegment, Export, ExportKind, FuncBody, FuncType, Global, Import,
+    ImportDesc, Limits, Table,
 };
 use std::fmt;
 
@@ -33,6 +34,8 @@ pub struct Module {
     /// Code section: one body per locally-defined function.
     pub code: Vec<FuncBody>,
     pub data: Vec<DataSegment>,
+    /// DataCount section: declared number of data segments, if present.
+    pub data_count: Option<u32>,
 }
 
 /// Decodes the module header and every known section into a [`Module`].
@@ -58,7 +61,8 @@ pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
             9 => module.elements = decode_element_section(payload)?,
             10 => module.code = decode_code_section(payload)?,
             11 => module.data = decode_data_section(payload)?,
-            _ => {} // custom / start / datacount: not yet aggregated
+            12 => module.data_count = Some(decode_datacount_section(payload)?),
+            _ => {} // custom: not yet aggregated
         }
     }
 
@@ -87,6 +91,8 @@ pub enum ValidationError {
     ElementFuncIndexOutOfRange { index: u32, func_space: usize },
     /// The start section names a function beyond the function space.
     StartFuncIndexOutOfRange { index: u32, func_space: usize },
+    /// The datacount section disagrees with the actual data segment count.
+    DataCountMismatch { declared: u32, actual: usize },
 }
 
 impl fmt::Display for ValidationError {
@@ -126,6 +132,11 @@ impl fmt::Display for ValidationError {
                 f,
                 "start func index {} out of range (func space {})",
                 index, func_space
+            ),
+            ValidationError::DataCountMismatch { declared, actual } => write!(
+                f,
+                "datacount section declares {} segments but data section has {}",
+                declared, actual
             ),
         }
     }
@@ -230,6 +241,16 @@ impl Module {
         if let Some(index) = self.start {
             if index as usize >= func_space {
                 return Err(ValidationError::StartFuncIndexOutOfRange { index, func_space });
+            }
+        }
+
+        // 6. a declared data count, if present, must match the data section.
+        if let Some(declared) = self.data_count {
+            if declared as usize != self.data.len() {
+                return Err(ValidationError::DataCountMismatch {
+                    declared,
+                    actual: self.data.len(),
+                });
             }
         }
 
@@ -514,6 +535,51 @@ mod tests {
         bytes.extend_from_slice(&[0x0A, 0x04, 0x01, 0x02, 0x00, 0x0B]); // code
         let module = parse_module(&bytes).unwrap();
         assert_eq!(module.start, Some(0));
+        assert_eq!(module.validate(), Ok(()));
+    }
+
+    fn passive_data() -> DataSegment {
+        DataSegment {
+            mode: crate::sections::DataMode::Passive,
+            bytes: vec![0xAA],
+        }
+    }
+
+    #[test]
+    fn datacount_matches_data_section() {
+        let module = Module {
+            data: vec![passive_data()],
+            data_count: Some(1),
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
+    }
+
+    #[test]
+    fn datacount_mismatch() {
+        let module = Module {
+            data: vec![passive_data()],
+            data_count: Some(2),
+            ..Module::default()
+        };
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::DataCountMismatch {
+                declared: 2,
+                actual: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_module_aggregates_datacount_section() {
+        // header + datacount(1) + data(1 passive segment [0xAA])
+        let mut bytes = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        bytes.extend_from_slice(&[0x0C, 0x01, 0x01]); // datacount = 1
+        bytes.extend_from_slice(&[0x0B, 0x04, 0x01, 0x01, 0x01, 0xAA]); // data: 1 passive seg
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(module.data_count, Some(1));
+        assert_eq!(module.data.len(), 1);
         assert_eq!(module.validate(), Ok(()));
     }
 

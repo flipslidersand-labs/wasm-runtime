@@ -260,6 +260,20 @@ pub fn decode_start_section(payload: &[u8]) -> Result<u32, ParseError> {
     Ok(func_index)
 }
 
+// ── DataCount section (id = 12) ───────────────────────────────────────────────
+
+/// Decodes the data count section: a single u32 declaring the number of data
+/// segments ahead of the data section (used by bulk-memory `data.drop` /
+/// `memory.init`). The payload must contain exactly that count and no trailing
+/// bytes.
+pub fn decode_datacount_section(payload: &[u8]) -> Result<u32, ParseError> {
+    let (count, n) = decode_leb128_u32(payload, 0)?;
+    if n != payload.len() {
+        return Err(ParseError::SizeMismatch);
+    }
+    Ok(count)
+}
+
 // ── Export section (id = 7) ───────────────────────────────────────────────────
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -1174,6 +1188,36 @@ mod tests {
     #[test]
     fn start_section_empty_payload() {
         assert_eq!(decode_start_section(&[]), Err(ParseError::UnexpectedEof));
+    }
+
+    // ── DataCount section ────────────────────────────────────────────────────
+
+    #[test]
+    fn datacount_section_single_byte() {
+        assert_eq!(decode_datacount_section(&[0x00]), Ok(0));
+        assert_eq!(decode_datacount_section(&[0x05]), Ok(5));
+    }
+
+    #[test]
+    fn datacount_section_multibyte() {
+        // 0x80 0x01 = 128
+        assert_eq!(decode_datacount_section(&[0x80, 0x01]), Ok(128));
+    }
+
+    #[test]
+    fn datacount_section_trailing_bytes_rejected() {
+        assert_eq!(
+            decode_datacount_section(&[0x01, 0xFF]),
+            Err(ParseError::SizeMismatch)
+        );
+    }
+
+    #[test]
+    fn datacount_section_empty_payload() {
+        assert_eq!(
+            decode_datacount_section(&[]),
+            Err(ParseError::UnexpectedEof)
+        );
     }
 
     // ── Export section ─────────────────────────────────────────────────────────

@@ -3,9 +3,10 @@ use wasm_runtime::{
     module::parse_module,
     parser::{parse_header, section_iter, ParseError},
     sections::{
-        decode_code_section, decode_data_section, decode_element_section, decode_export_section,
-        decode_function_section, decode_global_section, decode_import_section,
-        decode_memory_section, decode_start_section, decode_table_section, decode_type_section,
+        decode_code_section, decode_data_section, decode_datacount_section, decode_element_section,
+        decode_export_section, decode_function_section, decode_global_section,
+        decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
+        decode_type_section,
     },
 };
 
@@ -73,6 +74,11 @@ fn main() {
             9 => print_count(decode_element_section(payload).map(|v| v.len()), "elems"),
             10 => print_count(decode_code_section(payload).map(|v| v.len()), "funcs"),
             11 => print_count(decode_data_section(payload).map(|v| v.len()), "data"),
+            12 => {
+                if let Ok(count) = decode_datacount_section(payload) {
+                    print!("  (count {})", count);
+                }
+            }
             _ => {}
         }
         println!();
@@ -141,6 +147,10 @@ fn print_verbose(bytes: &[u8]) {
             9 => print_entries(decode_element_section(payload)),
             10 => print_entries(decode_code_section(payload)),
             11 => print_entries(decode_data_section(payload)),
+            12 => match decode_datacount_section(payload) {
+                Ok(count) => println!("  datacount: {}", count),
+                Err(e) => println!("  <decode error: {}>", e),
+            },
             _ => {}
         }
     }
