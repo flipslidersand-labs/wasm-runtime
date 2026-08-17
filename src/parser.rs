@@ -18,6 +18,7 @@ pub enum ParseError {
     SizeMismatch,
     UnsupportedInitExpr(u8),
     UnsupportedDataFlag(u8),
+    UnsupportedElementFlag(u8),
 }
 
 impl std::fmt::Display for ParseError {
@@ -45,6 +46,9 @@ impl std::fmt::Display for ParseError {
             }
             ParseError::UnsupportedDataFlag(b) => {
                 write!(f, "unsupported data segment flag: {:#04X}", b)
+            }
+            ParseError::UnsupportedElementFlag(b) => {
+                write!(f, "unsupported element segment flag: {:#04X}", b)
             }
         }
     }

@@ -614,6 +614,62 @@ pub fn decode_data_section(payload: &[u8]) -> Result<Vec<DataSegment>, ParseErro
     Ok(segments)
 }
 
+// ── Element section (id = 9) ──────────────────────────────────────────────────
+
+/// An element segment: initializes a range of a table with function references.
+///
+/// Only the most common `flag = 0` form is decoded (active, table 0, funcref, a
+/// vector of function indices). `offset_expr` holds the raw const-expr bytes
+/// (including the trailing `0x0B`).
+#[derive(Debug, PartialEq, Clone)]
+pub struct ElementSegment {
+    pub table_index: u32,
+    pub offset_expr: Vec<u8>,
+    pub func_indices: Vec<u32>,
+}
+
+/// Reads a `count`-prefixed vector of LEB128 u32 values, advancing `*pos`.
+fn read_u32_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u32>, ParseError> {
+    let (count, n) = decode_leb128_u32(payload, *pos)?;
+    *pos += n;
+    let mut out = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let (v, n) = decode_leb128_u32(payload, *pos)?;
+        *pos += n;
+        out.push(v);
+    }
+    Ok(out)
+}
+
+pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, ParseError> {
+    let mut pos = 0;
+    let (count, n) = decode_leb128_u32(payload, pos)?;
+    pos += n;
+
+    let mut segments = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let (flag, n) = decode_leb128_u32(payload, pos)?;
+        pos += n;
+
+        match flag {
+            // active, table 0, offset_expr followed by a funcidx vector
+            0 => {
+                let offset_expr = read_init_expr(payload, &mut pos)?;
+                let func_indices = read_u32_vec(payload, &mut pos)?;
+                segments.push(ElementSegment {
+                    table_index: 0,
+                    offset_expr,
+                    func_indices,
+                });
+            }
+            // flags 1..=7 (passive/declarative/explicit-table/elemkind/typed) are
+            // not yet supported; reject rather than silently misread.
+            _ => return Err(ParseError::UnsupportedElementFlag(flag as u8)),
+        }
+    }
+    Ok(segments)
+}
+
 // ── Display implementations (human-readable, used by `wasm-dump --verbose`) ────
 
 impl fmt::Display for ValType {
@@ -781,6 +837,24 @@ impl fmt::Display for DataSegment {
             ),
             DataMode::Passive => write!(f, "passive data={} bytes", self.bytes.len()),
         }
+    }
+}
+
+impl fmt::Display for ElementSegment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let funcs = self
+            .func_indices
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(
+            f,
+            "active table[{}] offset={} funcs=[{}]",
+            self.table_index,
+            fmt_init_expr(&self.offset_expr),
+            funcs
+        )
     }
 }
 
@@ -1517,6 +1591,98 @@ mod tests {
             bytes: vec![0x01, 0x02],
         };
         assert_eq!(passive.to_string(), "passive data=2 bytes");
+    }
+
+    // ── Element section ──────────────────────────────────────────────────────
+
+    #[test]
+    fn element_section_empty() {
+        assert_eq!(decode_element_section(&[0x00]), Ok(vec![]));
+    }
+
+    #[test]
+    fn element_section_active_flag0_single_func() {
+        // count=1, flag=0, offset_expr=i32.const 0 end (0x41 0x00 0x0B),
+        // func_idx_vec: count=1 [0x00]
+        let payload = [0x01, 0x00, 0x41, 0x00, 0x0B, 0x01, 0x00];
+        assert_eq!(
+            decode_element_section(&payload),
+            Ok(vec![ElementSegment {
+                table_index: 0,
+                offset_expr: vec![0x41, 0x00, 0x0B],
+                func_indices: vec![0],
+            }])
+        );
+    }
+
+    #[test]
+    fn element_section_multiple_func_indices() {
+        // count=1, flag=0, offset_expr=i32.const 1 end (0x41 0x01 0x0B),
+        // func_idx_vec: count=3 [0,2,1]
+        let payload = [0x01, 0x00, 0x41, 0x01, 0x0B, 0x03, 0x00, 0x02, 0x01];
+        assert_eq!(
+            decode_element_section(&payload),
+            Ok(vec![ElementSegment {
+                table_index: 0,
+                offset_expr: vec![0x41, 0x01, 0x0B],
+                func_indices: vec![0, 2, 1],
+            }])
+        );
+    }
+
+    #[test]
+    fn element_section_two_segments() {
+        // count=2: [offset i32.const 0, funcs [0]], [offset i32.const 4, funcs [1,2]]
+        let payload = [
+            0x02, // count = 2
+            0x00, 0x41, 0x00, 0x0B, 0x01, 0x00, // seg 0
+            0x00, 0x41, 0x04, 0x0B, 0x02, 0x01, 0x02, // seg 1
+        ];
+        assert_eq!(
+            decode_element_section(&payload),
+            Ok(vec![
+                ElementSegment {
+                    table_index: 0,
+                    offset_expr: vec![0x41, 0x00, 0x0B],
+                    func_indices: vec![0],
+                },
+                ElementSegment {
+                    table_index: 0,
+                    offset_expr: vec![0x41, 0x04, 0x0B],
+                    func_indices: vec![1, 2],
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn element_section_unsupported_flag() {
+        // flag=1 (passive) is not yet supported
+        let payload = [0x01, 0x01];
+        assert_eq!(
+            decode_element_section(&payload),
+            Err(ParseError::UnsupportedElementFlag(0x01))
+        );
+    }
+
+    #[test]
+    fn element_section_truncated_func_vec() {
+        // flag=0, offset ok, func vec claims 2 indices but only 1 follows
+        let payload = [0x01, 0x00, 0x41, 0x00, 0x0B, 0x02, 0x00];
+        assert_eq!(
+            decode_element_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn display_element_segment() {
+        let seg = ElementSegment {
+            table_index: 0,
+            offset_expr: vec![0x41, 0x00, 0x0B],
+            func_indices: vec![0, 2, 1],
+        };
+        assert_eq!(seg.to_string(), "active table[0] offset=0 funcs=[0, 2, 1]");
     }
 
     // ── const expr ───────────────────────────────────────────────────────────

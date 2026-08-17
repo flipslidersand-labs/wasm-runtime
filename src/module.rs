@@ -6,10 +6,10 @@
 
 use crate::parser::{parse_header, section_iter, ParseError};
 use crate::sections::{
-    decode_code_section, decode_data_section, decode_export_section, decode_function_section,
-    decode_global_section, decode_import_section, decode_memory_section, decode_table_section,
-    decode_type_section, DataSegment, Export, ExportKind, FuncBody, FuncType, Global, Import,
-    ImportDesc, Limits, Table,
+    decode_code_section, decode_data_section, decode_element_section, decode_export_section,
+    decode_function_section, decode_global_section, decode_import_section, decode_memory_section,
+    decode_table_section, decode_type_section, DataSegment, ElementSegment, Export, ExportKind,
+    FuncBody, FuncType, Global, Import, ImportDesc, Limits, Table,
 };
 use std::fmt;
 
@@ -26,6 +26,8 @@ pub struct Module {
     pub memories: Vec<Limits>,
     pub globals: Vec<Global>,
     pub exports: Vec<Export>,
+    /// Element section: table-initializer segments (flag 0 only).
+    pub elements: Vec<ElementSegment>,
     /// Code section: one body per locally-defined function.
     pub code: Vec<FuncBody>,
     pub data: Vec<DataSegment>,
@@ -50,9 +52,10 @@ pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
             5 => module.memories = decode_memory_section(payload)?,
             6 => module.globals = decode_global_section(payload)?,
             7 => module.exports = decode_export_section(payload)?,
+            9 => module.elements = decode_element_section(payload)?,
             10 => module.code = decode_code_section(payload)?,
             11 => module.data = decode_data_section(payload)?,
-            _ => {} // custom / start / element / datacount: not yet aggregated
+            _ => {} // custom / start / datacount: not yet aggregated
         }
     }
 
@@ -75,6 +78,10 @@ pub enum ValidationError {
         index: u32,
         space: usize,
     },
+    /// An element segment initializes a table that does not exist.
+    ElementTableIndexOutOfRange { index: u32, table_space: usize },
+    /// An element segment references a function beyond the function space.
+    ElementFuncIndexOutOfRange { index: u32, func_space: usize },
 }
 
 impl fmt::Display for ValidationError {
@@ -99,6 +106,16 @@ impl fmt::Display for ValidationError {
                 f,
                 "export \"{}\" ({}) index {} out of range (space size {})",
                 name, kind, index, space
+            ),
+            ValidationError::ElementTableIndexOutOfRange { index, table_space } => write!(
+                f,
+                "element table index {} out of range (only {} tables)",
+                index, table_space
+            ),
+            ValidationError::ElementFuncIndexOutOfRange { index, func_space } => write!(
+                f,
+                "element func index {} out of range (func space {})",
+                index, func_space
             ),
         }
     }
@@ -177,6 +194,25 @@ impl Module {
                     index: export.index,
                     space,
                 });
+            }
+        }
+
+        // 4. element segments must target an existing table and reference funcs
+        //    that fall within the (imports + defined) function space.
+        for element in &self.elements {
+            if element.table_index as usize >= table_space {
+                return Err(ValidationError::ElementTableIndexOutOfRange {
+                    index: element.table_index,
+                    table_space,
+                });
+            }
+            for &func_index in &element.func_indices {
+                if func_index as usize >= func_space {
+                    return Err(ValidationError::ElementFuncIndexOutOfRange {
+                        index: func_index,
+                        func_space,
+                    });
+                }
             }
         }
 
@@ -345,6 +381,79 @@ mod tests {
                 space: 1,
             })
         );
+    }
+
+    fn elem_seg(func_indices: Vec<u32>) -> ElementSegment {
+        ElementSegment {
+            table_index: 0,
+            offset_expr: vec![0x41, 0x00, 0x0B],
+            func_indices,
+        }
+    }
+
+    #[test]
+    fn element_func_index_in_range() {
+        // 1 defined func (space 1) + 1 table => element referencing func 0 is valid.
+        let module = Module {
+            types: vec![func_type()],
+            functions: vec![0],
+            code: vec![empty_body()],
+            tables: vec![Table {
+                reftype: crate::sections::RefType::FuncRef,
+                limits: Limits { min: 1, max: None },
+            }],
+            elements: vec![elem_seg(vec![0])],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
+    }
+
+    #[test]
+    fn element_func_index_out_of_range() {
+        let module = Module {
+            types: vec![func_type()],
+            functions: vec![0],
+            code: vec![empty_body()],
+            tables: vec![Table {
+                reftype: crate::sections::RefType::FuncRef,
+                limits: Limits { min: 1, max: None },
+            }],
+            elements: vec![elem_seg(vec![5])],
+            ..Module::default()
+        };
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::ElementFuncIndexOutOfRange {
+                index: 5,
+                func_space: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn element_table_index_out_of_range() {
+        // element targets table 0 but the module declares no tables.
+        let module = Module {
+            elements: vec![elem_seg(vec![])],
+            ..Module::default()
+        };
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::ElementTableIndexOutOfRange {
+                index: 0,
+                table_space: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_module_aggregates_element_section() {
+        // header + table(1 funcref) + element(flag0, offset i32.const 0, funcs [0])
+        let mut bytes = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        bytes.extend_from_slice(&[0x04, 0x04, 0x01, 0x70, 0x00, 0x01]); // table
+        bytes.extend_from_slice(&[0x09, 0x07, 0x01, 0x00, 0x41, 0x00, 0x0B, 0x01, 0x00]); // element
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(module.elements, vec![elem_seg(vec![0])]);
     }
 
     #[test]
