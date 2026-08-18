@@ -1,12 +1,14 @@
 # wasm-runtime
 
-WebAssembly binary parser written in Rust — MVP implementation.
+WebAssembly binary parser written in Rust — decodes every known section of the WebAssembly MVP binary format into typed structs.
 
 ## Features
 
 - Validates the 8-byte wasm module header (magic + version)
 - Iterates over all section headers via a lazy iterator
-- Decodes Type, Function, and Export sections into typed structs
+- Decodes **all known sections (ids 0–12)** into typed structs:
+  Custom, Type, Import, Function, Table, Memory, Global, Export, Start, Element, Code, Data, DataCount
+- LEB128 (unsigned/signed) decoder with overflow and boundary checks
 - `wasm-dump` CLI: prints sections, exports, and (with `--verbose`) type signatures
 
 ## Directory structure
@@ -15,7 +17,7 @@ WebAssembly binary parser written in Rust — MVP implementation.
 src/
   lib.rs          — crate root
   parser.rs       — header parser, LEB128 decoder, section iterator, ParseError
-  sections.rs     — Type / Function / Export section decoders
+  sections.rs     — decoders for all known sections (Type … DataCount)
   bin/
     wasm-dump.rs  — CLI entry point
 ```
@@ -60,7 +62,7 @@ exports:
 cargo test
 ```
 
-25 tests — header parsing, LEB128 decoding, section iteration, Type/Function/Export decoding.
+136 tests — header parsing, LEB128 decoding, section iteration, and decoding of all known sections.
 
 ## License
 
