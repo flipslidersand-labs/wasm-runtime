@@ -139,10 +139,13 @@ fn print_verbose(bytes: &[u8]) {
 
         match hdr.id {
             0 => match decode_custom_section(payload) {
-                Ok(c) if c.name == "name" => match decode_name_section(&c.bytes) {
-                    Ok(ns) => print!("{}", ns),
-                    Err(e) => println!("  <name section decode error: {}>", e),
-                },
+                Ok(c) if c.name == "name" => {
+                    println!("  {}", c);
+                    match decode_name_section(&c.bytes) {
+                        Ok(ns) => print!("{}", ns),
+                        Err(e) => println!("  <name section decode error: {}>", e),
+                    }
+                }
                 Ok(c) => println!("  {}", c),
                 Err(e) => println!("  <decode error: {}>", e),
             },

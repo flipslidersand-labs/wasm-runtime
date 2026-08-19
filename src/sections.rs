@@ -240,7 +240,9 @@ pub fn decode_name_section(bytes: &[u8]) -> Result<NameSection, ParseError> {
         let (size, n) = decode_leb128_u32(bytes, pos)?;
         pos += n;
 
-        let sub_end = pos + size as usize;
+        let sub_end = pos
+            .checked_add(size as usize)
+            .ok_or(ParseError::UnexpectedEof)?;
         if sub_end > bytes.len() {
             return Err(ParseError::UnexpectedEof);
         }
@@ -1142,6 +1144,9 @@ impl fmt::Display for CustomSection {
 
 impl fmt::Display for NameSection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.module.is_none() && self.functions.is_empty() {
+            return writeln!(f, "  (empty)");
+        }
         if let Some(m) = &self.module {
             writeln!(f, "  module: \"{}\"", m)?;
         }
@@ -1552,8 +1557,22 @@ mod tests {
 
     // ── Name section ─────────────────────────────────────────────────────────
 
+    fn leb128_u32(mut val: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let byte = (val & 0x7F) as u8;
+            val >>= 7;
+            if val == 0 {
+                out.push(byte);
+                break;
+            }
+            out.push(byte | 0x80);
+        }
+        out
+    }
+
     fn name_str(s: &str) -> Vec<u8> {
-        let mut v = vec![s.len() as u8];
+        let mut v = leb128_u32(s.len() as u32);
         v.extend_from_slice(s.as_bytes());
         v
     }
