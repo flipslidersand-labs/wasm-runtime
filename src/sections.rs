@@ -1586,9 +1586,9 @@ mod tests {
     fn name_section_module_name() {
         // subsection id=0, size=5 ("mod" => len=3 + 3 bytes = 4 bytes, plus size LEB128)
         // payload of sub: [0x03, b'm', b'o', b'd'] = 4 bytes
-        let mut sub = name_str("mod");                    // [0x03, 'm', 'o', 'd']
+        let mut sub = name_str("mod"); // [0x03, 'm', 'o', 'd']
         let size = sub.len() as u8;
-        let mut bytes = vec![0x00, size];                 // id=0, size=4
+        let mut bytes = vec![0x00, size]; // id=0, size=4
         bytes.append(&mut sub);
         assert_eq!(
             decode_name_section(&bytes),
@@ -1603,9 +1603,9 @@ mod tests {
     fn name_section_function_names() {
         // subsection id=1: count=2, (0,"add"), (1,"sub")
         let mut sub: Vec<u8> = vec![0x02]; // count=2
-        sub.push(0x00);                    // idx=0
+        sub.push(0x00); // idx=0
         sub.extend_from_slice(&name_str("add"));
-        sub.push(0x01);                    // idx=1
+        sub.push(0x01); // idx=1
         sub.extend_from_slice(&name_str("sub"));
         let size = sub.len() as u8;
         let mut bytes = vec![0x01, size];
