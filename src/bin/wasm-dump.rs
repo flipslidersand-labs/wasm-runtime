@@ -5,8 +5,8 @@ use wasm_runtime::{
     sections::{
         decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
         decode_element_section, decode_export_section, decode_function_section,
-        decode_global_section, decode_import_section, decode_memory_section, decode_start_section,
-        decode_table_section, decode_type_section,
+        decode_global_section, decode_import_section, decode_memory_section, decode_name_section,
+        decode_start_section, decode_table_section, decode_type_section,
     },
 };
 
@@ -62,6 +62,13 @@ fn main() {
             0 => {
                 if let Ok(c) = decode_custom_section(payload) {
                     print!("  (name \"{}\")", c.name);
+                    if c.name == "name" {
+                        if let Ok(ns) = decode_name_section(&c.bytes) {
+                            if !ns.functions.is_empty() {
+                                print!("  ({} func names)", ns.functions.len());
+                            }
+                        }
+                    }
                 }
             }
             1 => print_count(decode_type_section(payload).map(|v| v.len()), "types"),
@@ -132,6 +139,10 @@ fn print_verbose(bytes: &[u8]) {
 
         match hdr.id {
             0 => match decode_custom_section(payload) {
+                Ok(c) if c.name == "name" => match decode_name_section(&c.bytes) {
+                    Ok(ns) => print!("{}", ns),
+                    Err(e) => println!("  <name section decode error: {}>", e),
+                },
                 Ok(c) => println!("  {}", c),
                 Err(e) => println!("  <decode error: {}>", e),
             },

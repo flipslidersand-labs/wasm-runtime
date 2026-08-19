@@ -212,6 +212,69 @@ pub fn decode_custom_section(payload: &[u8]) -> Result<CustomSection, ParseError
     Ok(CustomSection { name, bytes })
 }
 
+// ── Name section (custom name == "name") ─────────────────────────────────────
+
+/// Decoded contents of the wasm name section (a custom section whose `name`
+/// field is `"name"`). Only subsections 0 (module name) and 1 (function names)
+/// are decoded; all others are silently skipped.
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct NameSection {
+    /// Subsection 0: the module name, if present.
+    pub module: Option<String>,
+    /// Subsection 1: `(function_index, name)` pairs from the function namemap.
+    pub functions: Vec<(u32, String)>,
+}
+
+/// Decodes the payload bytes of a `"name"` custom section into a [`NameSection`].
+///
+/// The payload is a sequence of subsections, each `id:byte size:u32 payload[size]`.
+/// Unknown subsection ids are skipped by advancing `size` bytes.
+pub fn decode_name_section(bytes: &[u8]) -> Result<NameSection, ParseError> {
+    let mut pos = 0;
+    let mut ns = NameSection::default();
+
+    while pos < bytes.len() {
+        let id = bytes[pos];
+        pos += 1;
+
+        let (size, n) = decode_leb128_u32(bytes, pos)?;
+        pos += n;
+
+        let sub_end = pos + size as usize;
+        if sub_end > bytes.len() {
+            return Err(ParseError::UnexpectedEof);
+        }
+
+        let sub = &bytes[pos..sub_end];
+
+        match id {
+            // subsection 0: module name — a single namestring
+            0 => {
+                let mut p = 0;
+                ns.module = Some(read_name(sub, &mut p)?);
+            }
+            // subsection 1: function names — vec(idx:u32 name:namestring)
+            1 => {
+                let mut p = 0;
+                let (count, n) = decode_leb128_u32(sub, p)?;
+                p += n;
+                for _ in 0..count {
+                    let (idx, n) = decode_leb128_u32(sub, p)?;
+                    p += n;
+                    let name = read_name(sub, &mut p)?;
+                    ns.functions.push((idx, name));
+                }
+            }
+            // all other subsection ids (e.g. 2 = local names): skip
+            _ => {}
+        }
+
+        pos = sub_end;
+    }
+
+    Ok(ns)
+}
+
 // ── Memory section (id = 5) ──────────────────────────────────────────────────
 
 pub fn decode_memory_section(payload: &[u8]) -> Result<Vec<Limits>, ParseError> {
@@ -1077,6 +1140,21 @@ impl fmt::Display for CustomSection {
     }
 }
 
+impl fmt::Display for NameSection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(m) = &self.module {
+            writeln!(f, "  module: \"{}\"", m)?;
+        }
+        if !self.functions.is_empty() {
+            writeln!(f, "  function names:")?;
+            for (idx, name) in &self.functions {
+                writeln!(f, "    [{}] \"{}\"", idx, name)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1470,6 +1548,104 @@ mod tests {
             bytes: vec![0xAA, 0xBB],
         };
         assert_eq!(c.to_string(), "name=\"producers\" payload=2 bytes");
+    }
+
+    // ── Name section ─────────────────────────────────────────────────────────
+
+    fn name_str(s: &str) -> Vec<u8> {
+        let mut v = vec![s.len() as u8];
+        v.extend_from_slice(s.as_bytes());
+        v
+    }
+
+    #[test]
+    fn name_section_empty_bytes() {
+        assert_eq!(decode_name_section(&[]), Ok(NameSection::default()));
+    }
+
+    #[test]
+    fn name_section_module_name() {
+        // subsection id=0, size=5 ("mod" => len=3 + 3 bytes = 4 bytes, plus size LEB128)
+        // payload of sub: [0x03, b'm', b'o', b'd'] = 4 bytes
+        let mut sub = name_str("mod");                    // [0x03, 'm', 'o', 'd']
+        let size = sub.len() as u8;
+        let mut bytes = vec![0x00, size];                 // id=0, size=4
+        bytes.append(&mut sub);
+        assert_eq!(
+            decode_name_section(&bytes),
+            Ok(NameSection {
+                module: Some("mod".to_string()),
+                functions: vec![],
+            })
+        );
+    }
+
+    #[test]
+    fn name_section_function_names() {
+        // subsection id=1: count=2, (0,"add"), (1,"sub")
+        let mut sub: Vec<u8> = vec![0x02]; // count=2
+        sub.push(0x00);                    // idx=0
+        sub.extend_from_slice(&name_str("add"));
+        sub.push(0x01);                    // idx=1
+        sub.extend_from_slice(&name_str("sub"));
+        let size = sub.len() as u8;
+        let mut bytes = vec![0x01, size];
+        bytes.extend_from_slice(&sub);
+        assert_eq!(
+            decode_name_section(&bytes),
+            Ok(NameSection {
+                module: None,
+                functions: vec![(0, "add".to_string()), (1, "sub".to_string())],
+            })
+        );
+    }
+
+    #[test]
+    fn name_section_module_and_functions() {
+        // subsection 0 then subsection 1
+        let mod_sub = name_str("mymod");
+        let mut func_sub: Vec<u8> = vec![0x01, 0x00]; // count=1, idx=0
+        func_sub.extend_from_slice(&name_str("main"));
+
+        let mut bytes = vec![0x00, mod_sub.len() as u8];
+        bytes.extend_from_slice(&mod_sub);
+        bytes.push(0x01);
+        bytes.push(func_sub.len() as u8);
+        bytes.extend_from_slice(&func_sub);
+
+        assert_eq!(
+            decode_name_section(&bytes),
+            Ok(NameSection {
+                module: Some("mymod".to_string()),
+                functions: vec![(0, "main".to_string())],
+            })
+        );
+    }
+
+    #[test]
+    fn name_section_unknown_subsection_skipped() {
+        // subsection id=2 (local names) with 3 opaque bytes — must be skipped
+        // followed by id=1 with one function name
+        let mut bytes = vec![0x02, 0x03, 0xAA, 0xBB, 0xCC]; // id=2, size=3, junk
+        let mut func_sub: Vec<u8> = vec![0x01, 0x00]; // count=1, idx=0
+        func_sub.extend_from_slice(&name_str("f"));
+        bytes.push(0x01);
+        bytes.push(func_sub.len() as u8);
+        bytes.extend_from_slice(&func_sub);
+        assert_eq!(
+            decode_name_section(&bytes),
+            Ok(NameSection {
+                module: None,
+                functions: vec![(0, "f".to_string())],
+            })
+        );
+    }
+
+    #[test]
+    fn name_section_subsection_size_overrun() {
+        // id=1, size=10 but only 2 bytes follow
+        let bytes = vec![0x01, 0x0A, 0xAA, 0xBB];
+        assert_eq!(decode_name_section(&bytes), Err(ParseError::UnexpectedEof));
     }
 
     // ── Export section ─────────────────────────────────────────────────────────
