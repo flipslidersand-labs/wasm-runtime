@@ -2,9 +2,14 @@
 name = "wasm-runtime"
 version = "0.1.0"
 edition = "2021"
-description = "WebAssembly binary parser — MVP implementation"
+rust-version = "1.65.0"
+description = "WebAssembly binary parser — decodes all known sections of the WebAssembly MVP binary format"
 license = "MIT"
 repository = "https://github.com/flipslidersand/wasm-runtime"
+readme = "README.md"
+keywords = ["wasm", "webassembly", "parser", "binary", "bytecode"]
+categories = ["wasm", "parser-implementations", "command-line-utilities"]
+exclude = [".github/", ".claude/"]
 
 [[bin]]
 name = "wasm-dump"
