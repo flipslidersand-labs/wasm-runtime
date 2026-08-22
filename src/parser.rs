@@ -182,12 +182,12 @@ pub fn parse_header(bytes: &[u8]) -> Result<u32, ParseError> {
         return Err(ParseError::UnexpectedEof);
     }
 
-    let magic: [u8; 4] = bytes[0..4].try_into().unwrap();
+    let magic = [bytes[0], bytes[1], bytes[2], bytes[3]];
     if magic != WASM_MAGIC {
         return Err(ParseError::InvalidMagic(magic));
     }
 
-    let version: [u8; 4] = bytes[4..8].try_into().unwrap();
+    let version = [bytes[4], bytes[5], bytes[6], bytes[7]];
     if version != WASM_VERSION {
         return Err(ParseError::InvalidVersion(version));
     }

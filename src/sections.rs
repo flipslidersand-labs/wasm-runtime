@@ -609,7 +609,8 @@ pub fn parse_const_expr(bytes: &[u8]) -> Result<ConstExpr, ParseError> {
             if pos + 4 > bytes.len() {
                 return Err(ParseError::UnexpectedEof);
             }
-            let v = f32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap());
+            let v =
+                f32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
             pos += 4;
             ConstExpr::F32(v)
         }
@@ -617,7 +618,16 @@ pub fn parse_const_expr(bytes: &[u8]) -> Result<ConstExpr, ParseError> {
             if pos + 8 > bytes.len() {
                 return Err(ParseError::UnexpectedEof);
             }
-            let v = f64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
+            let v = f64::from_le_bytes([
+                bytes[pos],
+                bytes[pos + 1],
+                bytes[pos + 2],
+                bytes[pos + 3],
+                bytes[pos + 4],
+                bytes[pos + 5],
+                bytes[pos + 6],
+                bytes[pos + 7],
+            ]);
             pos += 8;
             ConstExpr::F64(v)
         }
