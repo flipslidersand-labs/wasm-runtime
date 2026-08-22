@@ -8,17 +8,21 @@ use wasm_runtime::{
         decode_global_section, decode_import_section, decode_memory_section, decode_name_section,
         decode_start_section, decode_table_section, decode_type_section,
     },
+    stats::ModuleStats,
 };
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let (verbose, validate, path) = match args.as_slice() {
-        [_, flag, path] if flag == "--verbose" || flag == "-v" => (true, false, path.clone()),
-        [_, flag, path] if flag == "--validate" => (false, true, path.clone()),
-        [_, path] => (false, false, path.clone()),
+    let (verbose, validate, stats, path) = match args.as_slice() {
+        [_, flag, path] if flag == "--verbose" || flag == "-v" => {
+            (true, false, false, path.clone())
+        }
+        [_, flag, path] if flag == "--validate" => (false, true, false, path.clone()),
+        [_, flag, path] if flag == "--stats" => (false, false, true, path.clone()),
+        [_, path] => (false, false, false, path.clone()),
         _ => {
-            eprintln!("Usage: wasm-dump [--verbose|-v | --validate] <file.wasm>");
+            eprintln!("Usage: wasm-dump [--verbose|-v | --validate | --stats] <file.wasm>");
             process::exit(1);
         }
     };
@@ -98,6 +102,17 @@ fn main() {
 
     if verbose {
         print_verbose(&bytes);
+    }
+
+    if stats {
+        match parse_module(&bytes) {
+            Ok(module) => print!("{}", ModuleStats::from_module(&module)),
+            Err(e) => {
+                eprintln!("error: {}", e);
+                process::exit(1);
+            }
+        }
+        return;
     }
 
     if validate {
