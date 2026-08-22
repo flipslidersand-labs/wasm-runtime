@@ -13,3 +13,5 @@ path = "src/bin/wasm-dump.rs"
 [dependencies]
 
 [dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
