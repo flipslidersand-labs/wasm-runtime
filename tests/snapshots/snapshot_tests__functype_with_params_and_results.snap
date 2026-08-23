@@ -1,0 +1,5 @@
+---
+source: tests/snapshot_tests.rs
+expression: "format!(\"{}\", ft)"
+---
+(i32, i64) -> f32

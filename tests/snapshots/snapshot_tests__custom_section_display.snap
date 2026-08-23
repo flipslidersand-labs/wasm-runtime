@@ -1,0 +1,5 @@
+---
+source: tests/snapshot_tests.rs
+expression: "format!(\"{}\", c)"
+---
+name="producers" payload=16 bytes

@@ -1,0 +1,5 @@
+---
+source: tests/snapshot_tests.rs
+expression: "format!(\"{}\", b)"
+---
+locals=[] expr=1 bytes

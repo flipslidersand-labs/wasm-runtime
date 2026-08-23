@@ -1,0 +1,5 @@
+---
+source: tests/snapshot_tests.rs
+expression: "format!(\"{}\", d)"
+---
+active mem[0] offset=0 data=2 bytes

@@ -1,0 +1,8 @@
+---
+source: tests/snapshot_tests.rs
+expression: "format!(\"{}\", ns)"
+---
+  module: "my_module"
+  function names:
+    [0] "main"
+    [1] "helper"

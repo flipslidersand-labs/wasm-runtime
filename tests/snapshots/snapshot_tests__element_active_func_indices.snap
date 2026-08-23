@@ -1,0 +1,5 @@
+---
+source: tests/snapshot_tests.rs
+expression: "format!(\"{}\", e)"
+---
+active table[0] offset=0 funcref funcs=[0, 1, 2]

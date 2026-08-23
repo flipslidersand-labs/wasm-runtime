@@ -1,0 +1,5 @@
+---
+source: tests/snapshot_tests.rs
+expression: "format!(\"{}\", ConstExpr::GlobalGet(3))"
+---
+global.get 3

@@ -1,0 +1,5 @@
+---
+source: tests/snapshot_tests.rs
+expression: "format!(\"{}\", i)"
+---
+env::mem  Memory(min=1 max=4)
