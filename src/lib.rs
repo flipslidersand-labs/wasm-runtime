@@ -1,3 +1,4 @@
+pub mod diff;
 pub mod module;
 pub mod parser;
 pub mod prelude;
