@@ -9,20 +9,22 @@ use wasm_runtime::{
         decode_start_section, decode_table_section, decode_type_section,
     },
     stats::ModuleStats,
+    wat::module_to_wat,
 };
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let (verbose, validate, stats, path) = match args.as_slice() {
+    let (verbose, validate, stats, wat, path) = match args.as_slice() {
         [_, flag, path] if flag == "--verbose" || flag == "-v" => {
-            (true, false, false, path.clone())
+            (true, false, false, false, path.clone())
         }
-        [_, flag, path] if flag == "--validate" => (false, true, false, path.clone()),
-        [_, flag, path] if flag == "--stats" => (false, false, true, path.clone()),
-        [_, path] => (false, false, false, path.clone()),
+        [_, flag, path] if flag == "--validate" => (false, true, false, false, path.clone()),
+        [_, flag, path] if flag == "--stats" => (false, false, true, false, path.clone()),
+        [_, flag, path] if flag == "--wat" => (false, false, false, true, path.clone()),
+        [_, path] => (false, false, false, false, path.clone()),
         _ => {
-            eprintln!("Usage: wasm-dump [--verbose|-v | --validate | --stats] <file.wasm>");
+            eprintln!("Usage: wasm-dump [--verbose|-v | --validate | --stats | --wat] <file.wasm>");
             process::exit(1);
         }
     };
@@ -107,6 +109,17 @@ fn main() {
     if stats {
         match parse_module(&bytes) {
             Ok(module) => print!("{}", ModuleStats::from_module(&module)),
+            Err(e) => {
+                eprintln!("error: {}", e);
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if wat {
+        match parse_module(&bytes) {
+            Ok(module) => println!("{}", module_to_wat(&module)),
             Err(e) => {
                 eprintln!("error: {}", e);
                 process::exit(1);
