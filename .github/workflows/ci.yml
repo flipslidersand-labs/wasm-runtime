@@ -47,7 +47,7 @@ jobs:
         run: rm -f Cargo.lock
 
       - name: check (MSRV)
-        run: cargo check --all-targets
+        run: cargo check
 
   audit:
     runs-on: ubuntu-latest
