@@ -167,6 +167,9 @@ fn decode_leb128_signed(
         let byte = bytes[pos];
         pos += 1;
 
+        if shift >= 64 {
+            return Err(ParseError::Leb128Overflow);
+        }
         result |= ((byte & 0x7F) as i64) << shift;
         shift += 7;
 
