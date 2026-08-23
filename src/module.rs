@@ -4,7 +4,7 @@
 //! then checks the consistency constraints that individual section decoders
 //! cannot see (e.g. that the function and code sections agree in length).
 
-use crate::parser::{parse_header, section_iter, ParseError};
+use crate::parser::{parse_header, section_iter, ParseError, ParseErrorContext};
 use crate::sections::{
     decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
     decode_element_section, decode_export_section, decode_function_section, decode_global_section,
@@ -66,6 +66,46 @@ pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
             11 => module.data = decode_data_section(payload)?,
             12 => module.data_count = Some(decode_datacount_section(payload)?),
             _ => {} // unknown section id: skipped
+        }
+    }
+
+    Ok(module)
+}
+
+/// Like [`parse_module`] but returns [`ParseErrorContext`] on failure, which
+/// includes the byte offset and section id where the error occurred.
+pub fn parse_module_with_context(bytes: &[u8]) -> Result<Module, ParseErrorContext> {
+    let version = parse_header(bytes).map_err(|e| ParseErrorContext::new(e).with_offset(0))?;
+    let mut module = Module {
+        version,
+        ..Module::default()
+    };
+
+    for result in section_iter(bytes) {
+        let hdr = result.map_err(ParseErrorContext::new)?;
+        let payload = &bytes[hdr.offset..hdr.offset + hdr.size as usize];
+        let ctx = |e| {
+            ParseErrorContext::new(e)
+                .with_offset(hdr.offset)
+                .with_section(hdr.id)
+        };
+        match hdr.id {
+            0 => module
+                .customs
+                .push(decode_custom_section(payload).map_err(ctx)?),
+            1 => module.types = decode_type_section(payload).map_err(ctx)?,
+            2 => module.imports = decode_import_section(payload).map_err(ctx)?,
+            3 => module.functions = decode_function_section(payload).map_err(ctx)?,
+            4 => module.tables = decode_table_section(payload).map_err(ctx)?,
+            5 => module.memories = decode_memory_section(payload).map_err(ctx)?,
+            6 => module.globals = decode_global_section(payload).map_err(ctx)?,
+            7 => module.exports = decode_export_section(payload).map_err(ctx)?,
+            8 => module.start = Some(decode_start_section(payload).map_err(ctx)?),
+            9 => module.elements = decode_element_section(payload).map_err(ctx)?,
+            10 => module.code = decode_code_section(payload).map_err(ctx)?,
+            11 => module.data = decode_data_section(payload).map_err(ctx)?,
+            12 => module.data_count = Some(decode_datacount_section(payload).map_err(ctx)?),
+            _ => {}
         }
     }
 
