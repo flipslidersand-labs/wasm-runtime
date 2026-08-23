@@ -56,6 +56,57 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+/// [`ParseError`] enriched with the byte offset and section id where the
+/// error occurred. Returned by [`crate::module::parse_module_with_context`].
+#[derive(Debug)]
+pub struct ParseErrorContext {
+    /// The underlying parse error.
+    pub error: ParseError,
+    /// Byte offset of the section payload that triggered the error, if known.
+    pub offset: Option<usize>,
+    /// Section id that was being decoded when the error occurred, if known.
+    pub section_id: Option<u8>,
+}
+
+impl ParseErrorContext {
+    pub fn new(error: ParseError) -> Self {
+        Self {
+            error,
+            offset: None,
+            section_id: None,
+        }
+    }
+
+    pub fn with_offset(mut self, offset: usize) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    pub fn with_section(mut self, id: u8) -> Self {
+        self.section_id = Some(id);
+        self
+    }
+}
+
+impl std::fmt::Display for ParseErrorContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (self.section_id, self.offset) {
+            (Some(id), Some(off)) => {
+                write!(f, "section {} at offset {}: {}", id, off, self.error)
+            }
+            (Some(id), None) => write!(f, "section {}: {}", id, self.error),
+            (None, Some(off)) => write!(f, "at offset {}: {}", off, self.error),
+            (None, None) => write!(f, "{}", self.error),
+        }
+    }
+}
+
+impl std::error::Error for ParseErrorContext {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
 /// Decodes an unsigned LEB128 u32 from `bytes[offset..]`.
 /// Returns `(value, bytes_consumed)`.
 pub fn decode_leb128_u32(bytes: &[u8], offset: usize) -> Result<(u32, usize), ParseError> {
@@ -116,6 +167,9 @@ fn decode_leb128_signed(
         let byte = bytes[pos];
         pos += 1;
 
+        if shift >= 64 {
+            return Err(ParseError::Leb128Overflow);
+        }
         result |= ((byte & 0x7F) as i64) << shift;
         shift += 7;
 
