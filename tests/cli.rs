@@ -97,6 +97,79 @@ fn validate_globals_wasm_exits_zero() {
         .success();
 }
 
+// ── フラグ組み合わせ (#72) ────────────────────────────────
+
+#[test]
+fn verbose_and_validate_both_work() {
+    wasm_dump()
+        .args(["--verbose", "--validate", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Section["))
+        .stdout(predicate::str::contains("validation: OK"));
+}
+
+#[test]
+fn verbose_and_stats_both_work() {
+    wasm_dump()
+        .args(["--verbose", "--stats", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Section["))
+        .stdout(predicate::str::contains("Functions:"));
+}
+
+#[test]
+fn stats_and_validate_both_work() {
+    wasm_dump()
+        .args(["--stats", "--validate", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Functions:"))
+        .stdout(predicate::str::contains("validation: OK"));
+}
+
+#[test]
+fn all_flags_combined() {
+    wasm_dump()
+        .args(["--verbose", "--stats", "--validate", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Section["))
+        .stdout(predicate::str::contains("Functions:"))
+        .stdout(predicate::str::contains("validation: OK"));
+}
+
+#[test]
+fn flags_before_path_any_order() {
+    // flags can appear in different orders
+    wasm_dump()
+        .args(["--validate", "--verbose", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Section["))
+        .stdout(predicate::str::contains("validation: OK"));
+}
+
+#[test]
+fn path_before_flags() {
+    // file path can come before flags
+    wasm_dump()
+        .args([MINIMAL_WASM, "--verbose"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Section["));
+}
+
+#[test]
+fn unknown_flag_exits_nonzero() {
+    wasm_dump()
+        .args(["--unknown", MINIMAL_WASM])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown flag"));
+}
+
 // ── 異常系 ───────────────────────────────────────────────
 
 #[test]

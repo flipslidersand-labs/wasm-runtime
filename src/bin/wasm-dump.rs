@@ -13,10 +13,54 @@ use wasm_runtime::{
     wat::module_to_wat,
 };
 
+struct Flags {
+    verbose: bool,
+    validate: bool,
+    stats: bool,
+    wat: bool,
+}
+
+/// Parse CLI arguments into (Flags, path).
+/// Returns Err with a usage message on invalid input.
+fn parse_flags(args: &[String]) -> Result<(Flags, String), String> {
+    let mut flags = Flags {
+        verbose: false,
+        validate: false,
+        stats: false,
+        wat: false,
+    };
+    let mut path: Option<String> = None;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--verbose" | "-v" => flags.verbose = true,
+            "--validate" => flags.validate = true,
+            "--stats" => flags.stats = true,
+            "--wat" => flags.wat = true,
+            s if s.starts_with('-') => {
+                return Err(format!("unknown flag: {}", s));
+            }
+            s => {
+                if path.is_some() {
+                    return Err("too many positional arguments".to_string());
+                }
+                path = Some(s.to_string());
+            }
+        }
+        i += 1;
+    }
+
+    match path {
+        Some(p) => Ok((flags, p)),
+        None => Err("no input file specified".to_string()),
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // --diff takes two file arguments; handle it before the standard single-file dispatch.
+    // --diff takes two file arguments; handle it before the standard flag dispatch.
     if args.get(1).map(|s| s.as_str()) == Some("--diff") {
         match args.as_slice() {
             [_, _, path_a, path_b] => {
@@ -30,16 +74,12 @@ fn main() {
         }
     }
 
-    let (verbose, validate, stats, wat, path) = match args.as_slice() {
-        [_, flag, path] if flag == "--verbose" || flag == "-v" => {
-            (true, false, false, false, path.clone())
-        }
-        [_, flag, path] if flag == "--validate" => (false, true, false, false, path.clone()),
-        [_, flag, path] if flag == "--stats" => (false, false, true, false, path.clone()),
-        [_, flag, path] if flag == "--wat" => (false, false, false, true, path.clone()),
-        [_, path] => (false, false, false, false, path.clone()),
-        _ => {
-            eprintln!("Usage: wasm-dump [--verbose|-v | --validate | --stats | --wat | --diff <a.wasm> <b.wasm>] <file.wasm>");
+    let (flags, path) = match parse_flags(&args) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("error: {}", msg);
+            eprintln!("Usage: wasm-dump [--verbose|-v] [--validate] [--stats] [--wat] <file.wasm>");
+            eprintln!("       wasm-dump --diff <a.wasm> <b.wasm>");
             process::exit(1);
         }
     };
@@ -117,41 +157,37 @@ fn main() {
         println!();
     }
 
-    if verbose {
+    if flags.verbose {
         print_verbose(&bytes);
     }
 
-    if stats {
+    // Parse module once when any of stats / wat / validate are requested.
+    let need_module = flags.stats || flags.wat || flags.validate;
+    let module = if need_module {
         match parse_module(&bytes) {
-            Ok(module) => print!("{}", ModuleStats::from_module(&module)),
+            Ok(m) => Some(m),
             Err(e) => {
                 eprintln!("error: {}", e);
                 process::exit(1);
             }
         }
-        return;
+    } else {
+        None
+    };
+
+    if flags.stats {
+        print!("{}", ModuleStats::from_module(module.as_ref().unwrap()));
     }
 
-    if wat {
-        match parse_module(&bytes) {
-            Ok(module) => println!("{}", module_to_wat(&module)),
+    if flags.wat {
+        println!("{}", module_to_wat(module.as_ref().unwrap()));
+    }
+
+    if flags.validate {
+        match module.as_ref().unwrap().validate() {
+            Ok(()) => println!("\nvalidation: OK"),
             Err(e) => {
-                eprintln!("error: {}", e);
-                process::exit(1);
-            }
-        }
-        return;
-    }
-
-    if validate {
-        match parse_module(&bytes).map(|m| m.validate()) {
-            Ok(Ok(())) => println!("\nvalidation: OK"),
-            Ok(Err(e)) => {
                 eprintln!("\nvalidation error: {}", e);
-                process::exit(1);
-            }
-            Err(e) => {
-                eprintln!("\nerror: {}", e);
                 process::exit(1);
             }
         }
