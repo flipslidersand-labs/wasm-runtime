@@ -1,4 +1,5 @@
 pub mod diff;
+pub mod explain;
 pub mod module;
 pub mod parser;
 pub mod prelude;

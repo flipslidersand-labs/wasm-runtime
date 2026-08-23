@@ -170,6 +170,63 @@ fn unknown_flag_exits_nonzero() {
         .stderr(predicate::str::contains("unknown flag"));
 }
 
+// ── --timing (#63) ───────────────────────────────────────
+
+#[test]
+fn timing_alone_exits_zero_and_shows_parse_time() {
+    wasm_dump()
+        .args(["--timing", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("parse time:"));
+}
+
+#[test]
+fn timing_shows_unit() {
+    // output should contain either "µs" or "ms"
+    let output = wasm_dump()
+        .args(["--timing", MINIMAL_WASM])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("µs") || stdout.contains("ms"),
+        "expected time unit in output, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn stats_and_timing_both_work() {
+    wasm_dump()
+        .args(["--stats", "--timing", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Functions:"))
+        .stdout(predicate::str::contains("parse time:"));
+}
+
+#[test]
+fn timing_and_validate_both_work() {
+    wasm_dump()
+        .args(["--timing", "--validate", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("parse time:"))
+        .stdout(predicate::str::contains("validation: OK"));
+}
+
+#[test]
+fn all_flags_including_timing() {
+    wasm_dump()
+        .args(["--stats", "--timing", "--validate", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Functions:"))
+        .stdout(predicate::str::contains("validation: OK"))
+        .stdout(predicate::str::contains("parse time:"));
+}
+
 // ── 異常系 ───────────────────────────────────────────────
 
 #[test]
