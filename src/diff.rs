@@ -7,7 +7,7 @@ use std::fmt;
 #[derive(Debug, PartialEq, Clone)]
 pub enum DiffStatus {
     /// Present in both with identical byte size.
-    Equal,
+    Equal { size: u32 },
     /// Present in both but with different byte sizes.
     Changed { size_a: u32, size_b: u32 },
     /// Present only in `a`.
@@ -27,20 +27,13 @@ pub struct SectionDiff {
 impl fmt::Display for SectionDiff {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let marker = match &self.status {
-            DiffStatus::Equal => "=",
+            DiffStatus::Equal { .. } => "=",
             DiffStatus::Changed { .. } => "~",
             DiffStatus::OnlyInA { .. } => "-",
             DiffStatus::OnlyInB { .. } => "+",
         };
         let detail = match &self.status {
-            DiffStatus::Equal => format!("({} bytes)", {
-                if let DiffStatus::Equal = &self.status {
-                    // size stored via Changed as special case below; Equal carries no size
-                    0u32
-                } else {
-                    unreachable!()
-                }
-            }),
+            DiffStatus::Equal { size } => format!("({} bytes)", size),
             DiffStatus::Changed { size_a, size_b } => {
                 format!("({} → {} bytes)", size_a, size_b)
             }
@@ -75,7 +68,7 @@ pub fn diff_modules(a: &[u8], b: &[u8]) -> Result<Vec<SectionDiff>, ParseError> 
         let size_a = map_a.get(&id).copied();
         let size_b = map_b.get(&id).copied();
         let status = match (size_a, size_b) {
-            (Some(sa), Some(sb)) if sa == sb => DiffStatus::Equal,
+            (Some(sa), Some(sb)) if sa == sb => DiffStatus::Equal { size: sa },
             (Some(sa), Some(sb)) => DiffStatus::Changed {
                 size_a: sa,
                 size_b: sb,
@@ -98,7 +91,7 @@ pub fn diff_modules(a: &[u8], b: &[u8]) -> Result<Vec<SectionDiff>, ParseError> 
 pub fn diff_summary(diffs: &[SectionDiff]) -> String {
     let equal = diffs
         .iter()
-        .filter(|d| d.status == DiffStatus::Equal)
+        .filter(|d| matches!(d.status, DiffStatus::Equal { .. }))
         .count();
     let changed = diffs
         .iter()
@@ -172,7 +165,7 @@ mod tests {
         let a = wasm_with_sections(&[(1, &[0x01, 0x60, 0x00, 0x00])]);
         let diffs = diff_modules(&a, &a).unwrap();
         assert_eq!(diffs.len(), 1);
-        assert_eq!(diffs[0].status, DiffStatus::Equal);
+        assert!(matches!(diffs[0].status, DiffStatus::Equal { .. }));
     }
 
     #[test]
@@ -223,7 +216,7 @@ mod tests {
 
         let equal = diffs
             .iter()
-            .filter(|d| d.status == DiffStatus::Equal)
+            .filter(|d| matches!(d.status, DiffStatus::Equal { .. }))
             .count();
         let added = diffs
             .iter()
@@ -249,18 +242,43 @@ mod tests {
     }
 
     #[test]
-    fn display_equal() {
+    fn display_equal_shows_size() {
+        let d = SectionDiff {
+            id: 1,
+            name: "type",
+            status: DiffStatus::Equal { size: 4 },
+        };
+        let s = format!("{}", d);
+        assert!(s.contains("[=]"), "expected [=] marker, got: {}", s);
+        assert!(s.contains("4 bytes"), "expected size in output, got: {}", s);
+        assert!(s.contains("type"), "expected section name, got: {}", s);
+    }
+
+    #[test]
+    fn display_changed() {
         let d = SectionDiff {
             id: 1,
             name: "type",
             status: DiffStatus::Changed {
                 size_a: 4,
-                size_b: 4,
+                size_b: 8,
             },
         };
         let s = format!("{}", d);
         assert!(s.contains("[~]"));
-        assert!(s.contains("type"));
+        assert!(s.contains("4"));
+        assert!(s.contains("8"));
+    }
+
+    #[test]
+    fn equal_size_propagated_from_diff() {
+        let payload = &[0x01u8, 0x60, 0x00, 0x00] as &[u8];
+        let a = wasm_with_sections(&[(1, payload)]);
+        let diffs = diff_modules(&a, &a).unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].status, DiffStatus::Equal { size: 4 });
+        let s = format!("{}", diffs[0]);
+        assert!(s.contains("4 bytes"), "expected actual size, got: {}", s);
     }
 
     #[test]
