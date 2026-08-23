@@ -32,6 +32,23 @@ jobs:
       - name: test
         run: cargo test --all
 
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.65.0
+        uses: dtolnay/rust-toolchain@1.65.0
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Remove lock file for MSRV compatibility
+        run: rm -f Cargo.lock
+
+      - name: check (MSRV)
+        run: cargo check --all-targets
+
   audit:
     runs-on: ubuntu-latest
     steps:
