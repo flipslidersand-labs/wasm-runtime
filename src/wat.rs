@@ -90,11 +90,7 @@ pub fn module_to_wat(module: &Module) -> String {
         } else {
             vt.to_string()
         };
-        out.push_str(&format!(
-            "  (global {} ({} bytes init_expr))\n",
-            type_str,
-            global.init_expr.len()
-        ));
+        out.push_str(&format!("  (global {} ({}))\n", type_str, global.init));
     }
 
     // Exports
@@ -131,12 +127,12 @@ pub fn module_to_wat(module: &Module) -> String {
         match &seg.mode {
             crate::sections::DataMode::Active {
                 memory_index,
-                offset_expr,
+                offset,
             } => {
                 out.push_str(&format!(
-                    "  (data (memory {}) ({} bytes offset_expr) \"<{} bytes>\")\n",
+                    "  (data (memory {}) (offset {}) \"<{} bytes>\")\n",
                     memory_index,
-                    offset_expr.len(),
+                    offset,
                     seg.bytes.len()
                 ));
             }

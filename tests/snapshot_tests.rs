@@ -166,7 +166,7 @@ fn global_immutable_i32() {
             valtype: ValType::I32,
             mutable: false,
         },
-        init_expr: vec![0x41, 0x2A, 0x0B], // i32.const 42
+        init: ConstExpr::I32(42), // i32.const 42
     };
     assert_snapshot!(format!("{}", g));
 }
@@ -178,7 +178,7 @@ fn global_mutable_i64() {
             valtype: ValType::I64,
             mutable: true,
         },
-        init_expr: vec![0x42, 0x00, 0x0B], // i64.const 0
+        init: ConstExpr::I64(0), // i64.const 0
     };
     assert_snapshot!(format!("{}", g));
 }
@@ -199,7 +199,7 @@ fn data_active() {
     let d = DataSegment {
         mode: DataMode::Active {
             memory_index: 0,
-            offset_expr: vec![0x41, 0x00, 0x0B], // i32.const 0
+            offset: ConstExpr::I32(0), // i32.const 0
         },
         bytes: vec![0x01, 0x02],
     };
@@ -213,7 +213,7 @@ fn element_active_func_indices() {
     let e = ElementSegment {
         mode: ElementMode::Active {
             table_index: 0,
-            offset_expr: vec![0x41, 0x00, 0x0B],
+            offset: ConstExpr::I32(0),
         },
         reftype: RefType::FuncRef,
         init: ElementInit::FuncIndices(vec![0, 1, 2]),

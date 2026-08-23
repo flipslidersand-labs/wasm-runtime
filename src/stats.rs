@@ -184,8 +184,8 @@ mod tests {
     use super::*;
     use crate::module::Module;
     use crate::sections::{
-        Export, ExportKind, FuncBody, FuncType, Global, GlobalType, Import, ImportDesc, Limits,
-        ValType,
+        ConstExpr, Export, ExportKind, FuncBody, FuncType, Global, GlobalType, Import, ImportDesc,
+        Limits, ValType,
     };
 
     fn empty_module() -> Module {
@@ -331,7 +331,7 @@ mod tests {
                     valtype: ValType::I32,
                     mutable: false,
                 },
-                init_expr: vec![0x41, 0x00, 0x0B],
+                init: ConstExpr::I32(0),
             }],
             exports: vec![Export {
                 name: "main".to_string(),

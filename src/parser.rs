@@ -156,7 +156,8 @@ fn decode_leb128_signed(
     offset: usize,
     bits: u32,
 ) -> Result<(i64, usize), ParseError> {
-    let mut result: i64 = 0;
+    // Use u64 accumulator to avoid signed-shift UB in debug builds.
+    let mut result: u64 = 0;
     let mut shift: u32 = 0;
     let mut pos = offset;
 
@@ -167,21 +168,18 @@ fn decode_leb128_signed(
         let byte = bytes[pos];
         pos += 1;
 
-        if shift >= 64 {
+        if shift >= bits {
             return Err(ParseError::Leb128Overflow);
         }
-        result |= ((byte & 0x7F) as i64) << shift;
+        result |= ((byte & 0x7F) as u64) << shift;
         shift += 7;
 
         if byte & 0x80 == 0 {
             // Sign-extend when the sign bit (0x40) of the final byte is set.
             if shift < 64 && (byte & 0x40) != 0 {
-                result |= -1i64 << shift;
+                result |= u64::MAX << shift;
             }
-            return Ok((result, pos - offset));
-        }
-        if shift >= bits + 7 {
-            return Err(ParseError::Leb128Overflow);
+            return Ok((result as i64, pos - offset));
         }
     }
 }
