@@ -21,22 +21,16 @@ impl fmt::Display for GlobalType {
     }
 }
 
-/// A global variable: its type plus the raw bytes of its initializer expression
-/// (including the terminating `0x0B` end opcode).
+/// A global variable: its type plus its typed initializer expression.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Global {
     pub global_type: GlobalType,
-    pub init_expr: Vec<u8>,
+    pub init: ConstExpr,
 }
 
 impl fmt::Display for Global {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} = {}",
-            self.global_type,
-            super::fmt_init_expr(&self.init_expr)
-        )
+        write!(f, "{} = {}", self.global_type, self.init)
     }
 }
 
@@ -133,11 +127,9 @@ pub fn decode_global_section(payload: &[u8]) -> Result<Vec<Global>, ParseError> 
     let mut globals = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let global_type = super::read_global_type(payload, &mut pos)?;
-        let init_expr = super::read_init_expr(payload, &mut pos)?;
-        globals.push(Global {
-            global_type,
-            init_expr,
-        });
+        let init_bytes = super::read_init_expr(payload, &mut pos)?;
+        let init = parse_const_expr(&init_bytes)?;
+        globals.push(Global { global_type, init });
     }
     Ok(globals)
 }

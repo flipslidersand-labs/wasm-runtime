@@ -1,14 +1,15 @@
 use crate::parser::{decode_leb128_u32, ParseError};
 use std::fmt;
 
+use super::global::{parse_const_expr, ConstExpr};
+
 /// How a data segment is placed into memory.
 #[derive(Debug, PartialEq, Clone)]
 pub enum DataMode {
-    /// Copied into `memory[memory_index]` at `offset_expr` during instantiation.
-    /// `offset_expr` holds the raw const-expr bytes (including the trailing `0x0B`).
+    /// Copied into `memory[memory_index]` at `offset` during instantiation.
     Active {
         memory_index: u32,
-        offset_expr: Vec<u8>,
+        offset: ConstExpr,
     },
     /// Not copied automatically; referenced by `memory.init`.
     Passive,
@@ -26,12 +27,12 @@ impl fmt::Display for DataSegment {
         match &self.mode {
             DataMode::Active {
                 memory_index,
-                offset_expr,
+                offset,
             } => write!(
                 f,
                 "active mem[{}] offset={} data={} bytes",
                 memory_index,
-                super::fmt_init_expr(offset_expr),
+                offset,
                 self.bytes.len()
             ),
             DataMode::Passive => write!(f, "passive data={} bytes", self.bytes.len()),
@@ -50,24 +51,24 @@ pub fn decode_data_section(payload: &[u8]) -> Result<Vec<DataSegment>, ParseErro
         pos += n;
 
         let mode = match flag {
-            // active, memory 0, offset_expr follows
+            // active, memory 0, offset follows
             0 => {
-                let offset_expr = super::read_init_expr(payload, &mut pos)?;
+                let ob = super::read_init_expr(payload, &mut pos)?;
                 DataMode::Active {
                     memory_index: 0,
-                    offset_expr,
+                    offset: parse_const_expr(&ob)?,
                 }
             }
             // passive
             1 => DataMode::Passive,
-            // active, explicit memory index, offset_expr follows
+            // active, explicit memory index, offset follows
             2 => {
                 let (memory_index, n) = decode_leb128_u32(payload, pos)?;
                 pos += n;
-                let offset_expr = super::read_init_expr(payload, &mut pos)?;
+                let ob = super::read_init_expr(payload, &mut pos)?;
                 DataMode::Active {
                     memory_index,
-                    offset_expr,
+                    offset: parse_const_expr(&ob)?,
                 }
             }
             _ => return Err(ParseError::UnsupportedDataFlag(flag as u8)),

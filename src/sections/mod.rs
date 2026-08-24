@@ -138,15 +138,6 @@ fn read_byte_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError>
     Ok(bytes)
 }
 
-/// Renders an init_expr's decoded value, falling back to a byte count when the
-/// expression uses an instruction we don't interpret.
-fn fmt_init_expr(bytes: &[u8]) -> String {
-    match parse_const_expr(bytes) {
-        Ok(expr) => expr.to_string(),
-        Err(_) => format!("<{} bytes>", bytes.len()),
-    }
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -885,7 +876,7 @@ mod tests {
                     valtype: ValType::I32,
                     mutable: false,
                 },
-                init_expr: vec![0x41, 0x2A, 0x0B],
+                init: ConstExpr::I32(42),
             }])
         );
     }
@@ -902,7 +893,7 @@ mod tests {
                     valtype: ValType::I64,
                     mutable: true,
                 },
-                init_expr: vec![0x42, 0x01, 0x0B],
+                init: ConstExpr::I64(1),
             }])
         );
     }
@@ -920,7 +911,7 @@ mod tests {
                     valtype: ValType::I32,
                     mutable: false,
                 },
-                init_expr: vec![0x41, 0x8B, 0x01, 0x0B],
+                init: ConstExpr::I32(139),
             }])
         );
     }
@@ -951,7 +942,7 @@ mod tests {
                 valtype: ValType::I32,
                 mutable: true,
             },
-            init_expr: vec![0x41, 0x2A, 0x0B],
+            init: ConstExpr::I32(42),
         };
         assert_eq!(g.to_string(), "i32 mut = 42");
     }
@@ -1040,7 +1031,7 @@ mod tests {
             Ok(vec![DataSegment {
                 mode: DataMode::Active {
                     memory_index: 0,
-                    offset_expr: vec![0x41, 0x00, 0x0B],
+                    offset: ConstExpr::I32(0),
                 },
                 bytes: vec![0xAA, 0xBB, 0xCC],
             }])
@@ -1069,7 +1060,7 @@ mod tests {
             Ok(vec![DataSegment {
                 mode: DataMode::Active {
                     memory_index: 1,
-                    offset_expr: vec![0x41, 0x08, 0x0B],
+                    offset: ConstExpr::I32(8),
                 },
                 bytes: vec![0xFF],
             }])
@@ -1100,7 +1091,7 @@ mod tests {
         let active = DataSegment {
             mode: DataMode::Active {
                 memory_index: 0,
-                offset_expr: vec![0x41, 0x00, 0x0B],
+                offset: ConstExpr::I32(0),
             },
             bytes: vec![0xAA, 0xBB, 0xCC],
         };
@@ -1119,11 +1110,11 @@ mod tests {
         assert_eq!(decode_element_section(&[0x00]), Ok(vec![]));
     }
 
-    fn active0(offset: Vec<u8>, funcs: Vec<u32>) -> ElementSegment {
+    fn active0(offset: ConstExpr, funcs: Vec<u32>) -> ElementSegment {
         ElementSegment {
             mode: ElementMode::Active {
                 table_index: 0,
-                offset_expr: offset,
+                offset,
             },
             reftype: RefType::FuncRef,
             init: ElementInit::FuncIndices(funcs),
@@ -1136,7 +1127,7 @@ mod tests {
         let payload = [0x01, 0x00, 0x41, 0x00, 0x0B, 0x01, 0x00];
         assert_eq!(
             decode_element_section(&payload),
-            Ok(vec![active0(vec![0x41, 0x00, 0x0B], vec![0])])
+            Ok(vec![active0(ConstExpr::I32(0), vec![0])])
         );
     }
 
@@ -1146,7 +1137,7 @@ mod tests {
         let payload = [0x01, 0x00, 0x41, 0x01, 0x0B, 0x03, 0x00, 0x02, 0x01];
         assert_eq!(
             decode_element_section(&payload),
-            Ok(vec![active0(vec![0x41, 0x01, 0x0B], vec![0, 2, 1])])
+            Ok(vec![active0(ConstExpr::I32(1), vec![0, 2, 1])])
         );
     }
 
@@ -1160,8 +1151,8 @@ mod tests {
         assert_eq!(
             decode_element_section(&payload),
             Ok(vec![
-                active0(vec![0x41, 0x00, 0x0B], vec![0]),
-                active0(vec![0x41, 0x04, 0x0B], vec![1, 2]),
+                active0(ConstExpr::I32(0), vec![0]),
+                active0(ConstExpr::I32(4), vec![1, 2]),
             ])
         );
     }
@@ -1189,7 +1180,7 @@ mod tests {
             Ok(vec![ElementSegment {
                 mode: ElementMode::Active {
                     table_index: 1,
-                    offset_expr: vec![0x41, 0x00, 0x0B],
+                    offset: ConstExpr::I32(0),
                 },
                 reftype: RefType::FuncRef,
                 init: ElementInit::FuncIndices(vec![0]),
@@ -1220,7 +1211,7 @@ mod tests {
             Ok(vec![ElementSegment {
                 mode: ElementMode::Active {
                     table_index: 0,
-                    offset_expr: vec![0x41, 0x00, 0x0B],
+                    offset: ConstExpr::I32(0),
                 },
                 reftype: RefType::FuncRef,
                 init: ElementInit::Exprs(vec![vec![0xD2, 0x03, 0x0B]]),
@@ -1254,7 +1245,7 @@ mod tests {
             Ok(vec![ElementSegment {
                 mode: ElementMode::Active {
                     table_index: 0,
-                    offset_expr: vec![0x41, 0x00, 0x0B],
+                    offset: ConstExpr::I32(0),
                 },
                 reftype: RefType::FuncRef,
                 init: ElementInit::Exprs(vec![vec![0xD2, 0x00, 0x0B]]),
@@ -1308,7 +1299,7 @@ mod tests {
 
     #[test]
     fn display_element_segment_active_funcs() {
-        let seg = active0(vec![0x41, 0x00, 0x0B], vec![0, 2, 1]);
+        let seg = active0(ConstExpr::I32(0), vec![0, 2, 1]);
         assert_eq!(
             seg.to_string(),
             "active table[0] offset=0 funcref funcs=[0, 2, 1]"

@@ -371,7 +371,7 @@ impl Module {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sections::ValType;
+    use crate::sections::{ConstExpr, ValType};
 
     fn func_type() -> FuncType {
         FuncType {
@@ -511,7 +511,7 @@ mod tests {
                     valtype: ValType::I32,
                     mutable: false,
                 },
-                init_expr: vec![0x41, 0x00, 0x0B],
+                init: ConstExpr::I32(0),
             }],
             exports: vec![Export {
                 name: "g".to_string(),
@@ -535,7 +535,7 @@ mod tests {
         ElementSegment {
             mode: ElementMode::Active {
                 table_index: 0,
-                offset_expr: vec![0x41, 0x00, 0x0B],
+                offset: ConstExpr::I32(0),
             },
             reftype: crate::sections::RefType::FuncRef,
             init: ElementInit::FuncIndices(func_indices),

@@ -1,18 +1,17 @@
 use crate::parser::{decode_leb128_u32, ParseError};
 use std::fmt;
 
-use super::RefType;
+use super::{
+    global::{parse_const_expr, ConstExpr},
+    RefType,
+};
 
 /// How an element segment is placed. `Active` segments copy their elements into
-/// `table[table_index]` at `offset_expr` during instantiation; `Passive` and
+/// `table[table_index]` at `offset` during instantiation; `Passive` and
 /// `Declarative` are referenced later (`table.init`) or used only for validation.
-/// `offset_expr` holds the raw const-expr bytes (including the trailing `0x0B`).
 #[derive(Debug, PartialEq, Clone)]
 pub enum ElementMode {
-    Active {
-        table_index: u32,
-        offset_expr: Vec<u8>,
-    },
+    Active { table_index: u32, offset: ConstExpr },
     Passive,
     Declarative,
 }
@@ -40,13 +39,8 @@ impl fmt::Display for ElementSegment {
         match &self.mode {
             ElementMode::Active {
                 table_index,
-                offset_expr,
-            } => write!(
-                f,
-                "active table[{}] offset={} ",
-                table_index,
-                super::fmt_init_expr(offset_expr)
-            )?,
+                offset,
+            } => write!(f, "active table[{}] offset={} ", table_index, offset)?,
             ElementMode::Passive => write!(f, "passive ")?,
             ElementMode::Declarative => write!(f, "declarative ")?,
         }
@@ -129,12 +123,12 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
         let seg = match flag {
             // active, table 0, funcidx vector
             0 => {
-                let offset_expr = super::read_init_expr(payload, &mut pos)?;
+                let ob = super::read_init_expr(payload, &mut pos)?;
                 let func_indices = read_u32_vec(payload, &mut pos)?;
                 ElementSegment {
                     mode: ElementMode::Active {
                         table_index: 0,
-                        offset_expr,
+                        offset: parse_const_expr(&ob)?,
                     },
                     reftype: RefType::FuncRef,
                     init: ElementInit::FuncIndices(func_indices),
@@ -154,13 +148,13 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
             2 => {
                 let (table_index, n) = decode_leb128_u32(payload, pos)?;
                 pos += n;
-                let offset_expr = super::read_init_expr(payload, &mut pos)?;
+                let ob = super::read_init_expr(payload, &mut pos)?;
                 let reftype = read_elemkind(payload, &mut pos)?;
                 let func_indices = read_u32_vec(payload, &mut pos)?;
                 ElementSegment {
                     mode: ElementMode::Active {
                         table_index,
-                        offset_expr,
+                        offset: parse_const_expr(&ob)?,
                     },
                     reftype,
                     init: ElementInit::FuncIndices(func_indices),
@@ -178,12 +172,12 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
             }
             // active, table 0, expr vector (funcref implied)
             4 => {
-                let offset_expr = super::read_init_expr(payload, &mut pos)?;
+                let ob = super::read_init_expr(payload, &mut pos)?;
                 let exprs = read_expr_vec(payload, &mut pos)?;
                 ElementSegment {
                     mode: ElementMode::Active {
                         table_index: 0,
-                        offset_expr,
+                        offset: parse_const_expr(&ob)?,
                     },
                     reftype: RefType::FuncRef,
                     init: ElementInit::Exprs(exprs),
@@ -203,13 +197,13 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
             6 => {
                 let (table_index, n) = decode_leb128_u32(payload, pos)?;
                 pos += n;
-                let offset_expr = super::read_init_expr(payload, &mut pos)?;
+                let ob = super::read_init_expr(payload, &mut pos)?;
                 let reftype = read_reftype(payload, &mut pos)?;
                 let exprs = read_expr_vec(payload, &mut pos)?;
                 ElementSegment {
                     mode: ElementMode::Active {
                         table_index,
-                        offset_expr,
+                        offset: parse_const_expr(&ob)?,
                     },
                     reftype,
                     init: ElementInit::Exprs(exprs),
