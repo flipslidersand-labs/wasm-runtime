@@ -1,4 +1,7 @@
-pub use crate::module::{parse_module, parse_module_with_context, Module, ValidationError};
+pub use crate::module::{
+    parse_module, parse_module_with_context, parse_module_with_events, Module, SectionEvent,
+    ValidationError,
+};
 pub use crate::parser::{parse_header, section_iter, ParseError, ParseErrorContext, SectionHeader};
 pub use crate::sections::{
     ConstExpr, CustomSection, DataMode, DataSegment, ElementInit, ElementMode, ElementSegment,

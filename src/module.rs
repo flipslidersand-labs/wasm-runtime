@@ -4,7 +4,7 @@
 //! then checks the consistency constraints that individual section decoders
 //! cannot see (e.g. that the function and code sections agree in length).
 
-use crate::parser::{parse_header, section_iter, ParseError, ParseErrorContext};
+use crate::parser::{parse_header, section_iter, ParseError, ParseErrorContext, SectionHeader};
 use crate::sections::{
     decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
     decode_element_section, decode_export_section, decode_function_section, decode_global_section,
@@ -40,8 +40,74 @@ pub struct Module {
     pub data_count: Option<u32>,
 }
 
+/// A single section encountered during parsing.
+///
+/// Passed to the callback in [`parse_module_with_events`] for each section in
+/// the binary, in the order they appear.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SectionEvent {
+    /// Raw section id (0 = custom, 1 = type, …, 12 = datacount).
+    pub id: u8,
+    /// Human-readable name matching the id.
+    pub name: &'static str,
+    /// Payload size in bytes (does not include the id or LEB128 size bytes).
+    pub size: u32,
+    /// Byte offset of the payload start within the module bytes.
+    pub offset: usize,
+}
+
+fn section_name(id: u8) -> &'static str {
+    match id {
+        0 => "custom",
+        1 => "type",
+        2 => "import",
+        3 => "func",
+        4 => "table",
+        5 => "memory",
+        6 => "global",
+        7 => "export",
+        8 => "start",
+        9 => "element",
+        10 => "code",
+        11 => "data",
+        12 => "datacount",
+        _ => "unknown",
+    }
+}
+
+fn apply_section(
+    module: &mut Module,
+    hdr: &SectionHeader,
+    payload: &[u8],
+) -> Result<(), ParseError> {
+    match hdr.id {
+        0 => module.customs.push(decode_custom_section(payload)?),
+        1 => module.types = decode_type_section(payload)?,
+        2 => module.imports = decode_import_section(payload)?,
+        3 => module.functions = decode_function_section(payload)?,
+        4 => module.tables = decode_table_section(payload)?,
+        5 => module.memories = decode_memory_section(payload)?,
+        6 => module.globals = decode_global_section(payload)?,
+        7 => module.exports = decode_export_section(payload)?,
+        8 => module.start = Some(decode_start_section(payload)?),
+        9 => module.elements = decode_element_section(payload)?,
+        10 => module.code = decode_code_section(payload)?,
+        11 => module.data = decode_data_section(payload)?,
+        12 => module.data_count = Some(decode_datacount_section(payload)?),
+        _ => {} // unknown section id: skipped
+    }
+    Ok(())
+}
+
 /// Decodes the module header and every known section into a [`Module`].
-pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
+///
+/// `on_section` is called once per section, in order, before the section is
+/// decoded.  The callback receives a [`SectionEvent`] describing the section's
+/// id, name, payload size, and payload offset.  Use `|_| {}` to ignore events.
+pub fn parse_module_with_events(
+    bytes: &[u8],
+    mut on_section: impl FnMut(SectionEvent),
+) -> Result<Module, ParseError> {
     let version = parse_header(bytes)?;
     let mut module = Module {
         version,
@@ -51,22 +117,13 @@ pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
     for result in section_iter(bytes) {
         let hdr = result?;
         let payload = &bytes[hdr.offset..hdr.offset + hdr.size as usize];
-        match hdr.id {
-            0 => module.customs.push(decode_custom_section(payload)?),
-            1 => module.types = decode_type_section(payload)?,
-            2 => module.imports = decode_import_section(payload)?,
-            3 => module.functions = decode_function_section(payload)?,
-            4 => module.tables = decode_table_section(payload)?,
-            5 => module.memories = decode_memory_section(payload)?,
-            6 => module.globals = decode_global_section(payload)?,
-            7 => module.exports = decode_export_section(payload)?,
-            8 => module.start = Some(decode_start_section(payload)?),
-            9 => module.elements = decode_element_section(payload)?,
-            10 => module.code = decode_code_section(payload)?,
-            11 => module.data = decode_data_section(payload)?,
-            12 => module.data_count = Some(decode_datacount_section(payload)?),
-            _ => {} // unknown section id: skipped
-        }
+        on_section(SectionEvent {
+            id: hdr.id,
+            name: section_name(hdr.id),
+            size: hdr.size,
+            offset: hdr.offset,
+        });
+        apply_section(&mut module, &hdr, payload)?;
     }
 
     Ok(module)
@@ -110,6 +167,11 @@ pub fn parse_module_with_context(bytes: &[u8]) -> Result<Module, ParseErrorConte
     }
 
     Ok(module)
+}
+
+/// Decodes the module header and every known section into a [`Module`].
+pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
+    parse_module_with_events(bytes, |_| {})
 }
 
 /// A cross-section consistency violation. Distinct from [`ParseError`], which
