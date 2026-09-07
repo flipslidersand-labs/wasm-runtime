@@ -87,3 +87,10 @@ jobs:
         with:
           files: lcov.info
           fail_ci_if_error: false
+
+  reviewdog:
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/reviewdog-rust.yml@main
