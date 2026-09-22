@@ -737,4 +737,26 @@ mod tests {
         assert_eq!(module.code.len(), 1);
         assert_eq!(module.validate(), Ok(()));
     }
+
+    #[test]
+    fn parse_module_oob_section_size_returns_err_not_panic() {
+        // header(8) + section id=1, declared size=0xFF(255) but only 1 byte of
+        // payload actually follows. Regression test for issue #111: this used to
+        // panic with a slice-index-out-of-range instead of returning ParseError.
+        let mut bytes = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        bytes.push(1); // section id
+        bytes.push(0xFF); // declared size (LEB128 single byte, 255)
+        bytes.push(0x00); // only 1 byte of actual payload present
+        assert_eq!(parse_module(&bytes), Err(ParseError::UnexpectedEof));
+    }
+
+    #[test]
+    fn parse_module_with_context_oob_section_size_returns_err_not_panic() {
+        let mut bytes = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        bytes.push(1);
+        bytes.push(0xFF);
+        bytes.push(0x00);
+        let err = parse_module_with_context(&bytes).unwrap_err();
+        assert_eq!(err.error, ParseError::UnexpectedEof);
+    }
 }

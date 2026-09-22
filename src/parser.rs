@@ -222,7 +222,11 @@ impl<'a> Iterator for SectionIter<'a> {
         self.pos += consumed;
 
         let offset = self.pos;
-        self.pos += size as usize;
+        let end = match offset.checked_add(size as usize) {
+            Some(end) if end <= self.bytes.len() => end,
+            _ => return Some(Err(ParseError::UnexpectedEof)),
+        };
+        self.pos = end;
 
         Some(Ok(SectionHeader { id, size, offset }))
     }
@@ -423,5 +427,29 @@ mod tests {
         let wasm = make_wasm(&[(1, &[0xAA]), (3, &[0xBB, 0xCC]), (7, &[0xDD])]);
         let ids: Vec<u8> = section_iter(&wasm).map(|r| r.unwrap().id).collect();
         assert_eq!(ids, vec![1, 3, 7]);
+    }
+
+    #[test]
+    fn section_iter_declared_size_exceeds_remaining_bytes_returns_err() {
+        // header(8) + section id=1, declared size=0xFF but only 1 byte of payload follows.
+        let mut wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        wasm.push(1); // section id
+        wasm.push(0xFF); // declared size (LEB128 single byte, 255)
+        wasm.push(0x00); // only 1 byte of actual payload present
+        let sections: Vec<_> = section_iter(&wasm).collect();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0], Err(ParseError::UnexpectedEof));
+    }
+
+    #[test]
+    fn section_iter_declared_size_overflow_does_not_panic() {
+        // offset + size overflows usize; must return Err, not panic.
+        let mut wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        wasm.push(1); // section id
+                      // LEB128 encoding of u32::MAX (0xFFFFFFFF)
+        wasm.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0x0F]);
+        let sections: Vec<_> = section_iter(&wasm).collect();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0], Err(ParseError::UnexpectedEof));
     }
 }
