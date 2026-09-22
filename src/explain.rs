@@ -3,6 +3,7 @@
 //! Walks the binary from start to finish and emits an [`ExplainLine`] for each
 //! logical group of bytes, stating what those bytes mean.
 
+use crate::module::section_name;
 use crate::parser::decode_leb128_u32;
 use std::fmt;
 
@@ -284,27 +285,6 @@ impl<'a> Cursor<'a> {
                 0
             }
         }
-    }
-}
-
-// ── Name helpers ─────────────────────────────────────────────────────────────
-
-fn section_name(id: u8) -> &'static str {
-    match id {
-        0 => "custom",
-        1 => "type",
-        2 => "import",
-        3 => "func",
-        4 => "table",
-        5 => "memory",
-        6 => "global",
-        7 => "export",
-        8 => "start",
-        9 => "element",
-        10 => "code",
-        11 => "data",
-        12 => "datacount",
-        _ => "unknown",
     }
 }
 

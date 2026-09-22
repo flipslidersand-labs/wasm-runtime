@@ -56,7 +56,9 @@ pub struct SectionEvent {
     pub offset: usize,
 }
 
-fn section_name(id: u8) -> &'static str {
+/// Short lowercase name for a wasm section id (0 = custom, 1 = type, …, 12 =
+/// datacount; unrecognized ids map to "unknown").
+pub fn section_name(id: u8) -> &'static str {
     match id {
         0 => "custom",
         1 => "type",
