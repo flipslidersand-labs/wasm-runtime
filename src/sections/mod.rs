@@ -696,6 +696,27 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn export_section_name_len_exceeds_payload() {
+        // count=1, name_len=10 but only 1 byte of name data remains
+        let payload = vec![0x01, 0x0A, b'x'];
+        assert_eq!(
+            decode_export_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn export_section_missing_kind_byte() {
+        // count=1, name="x"(1 byte), no kind byte follows
+        let mut payload = vec![0x01, 0x01];
+        payload.extend_from_slice(b"x");
+        assert_eq!(
+            decode_export_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
     // ── Code section ─────────────────────────────────────────────────────────
 
     #[test]
