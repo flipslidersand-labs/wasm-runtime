@@ -346,6 +346,36 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn import_section_missing_kind_byte() {
+        // count=1, module="env"(3), name="foo"(3), then payload ends before the kind byte.
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"foo");
+        assert_eq!(
+            decode_import_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn import_section_table_missing_reftype_byte() {
+        // count=1, module="env"(3), name="tbl"(3), kind=0x01(Table), then payload ends
+        // before the reftype byte.
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"tbl");
+        payload.push(0x01);
+        assert_eq!(
+            decode_import_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
     // ── Type section ──────────────────────────────────────────────────────────
 
     #[test]
