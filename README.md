@@ -12,6 +12,11 @@ Rust 製 WebAssembly バイナリパーサー。WebAssembly MVP バイナリフ�
 - LEB128 (unsigned/signed) decoder with overflow and boundary checks / オーバーフロー・境界チェック付き LEB128 デコーダー
 - Cross-section validation (`validate()`) / セクション横断バリデーション
 - `wasm-dump` CLI: compact section list, verbose decoded output, validation / `wasm-dump` CLI
+- `--stats`: module summary statistics / モジュールのサマリー統計
+- `--wat`: WAT (WebAssembly Text format) output / WAT（WebAssembly テキスト形式）出力
+- `--timing`: parse time measurement / パース時間の計測
+- `--explain`: byte-level annotated explanation of the module / モジュールのバイト単位の注釈付き解説
+- `--diff`: structural diff between two wasm modules / 2つの wasm モジュール間の構造的差分
 
 ## Directory structure / ディレクトリ構成
 
@@ -43,6 +48,11 @@ cargo build --release
 wasm-dump path/to/file.wasm            # compact section list / セクション一覧
 wasm-dump --verbose path/to/file.wasm  # decoded contents / デコード出力
 wasm-dump --validate path/to/file.wasm # cross-section validation / バリデーション
+wasm-dump --stats path/to/file.wasm    # summary statistics / サマリー統計
+wasm-dump --wat path/to/file.wasm      # WAT text output / WAT テキスト出力
+wasm-dump --timing path/to/file.wasm   # parse time measurement / パース時間計測
+wasm-dump --explain path/to/file.wasm  # byte-level annotated explanation / バイト単位の注釈付き解説
+wasm-dump --diff a.wasm b.wasm         # structural diff between two modules / 2モジュール間の構造的差分
 ```
 
 ### Example output / 出力例
