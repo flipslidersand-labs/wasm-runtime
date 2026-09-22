@@ -18,13 +18,22 @@ Rust 製 WebAssembly バイナリパーサー。WebAssembly MVP バイナリフ�
 ```
 src/
   lib.rs          — crate root
+  prelude.rs      — common re-exports
   parser.rs       — header parser, LEB128 decoders, section_iter, ParseError
-  sections.rs     — decoders and Display impls for all known sections
   module.rs       — Module struct, parse_module(), validate(), ValidationError
+  sections/       — decoders and Display impls for each known section
+    mod.rs        — section dispatch, apply_section()
+    custom.rs, data.rs, element.rs, export.rs, func.rs,
+    global.rs, import.rs, misc.rs, types.rs
+  diff.rs         — module diffing
+  explain.rs      — annotated/explained decoding output
+  stats.rs        — section/size statistics
+  wat.rs          — WAT (WebAssembly Text) rendering
   bin/
     wasm-dump.rs  — CLI entry point
 tests/
-  error_handling.rs  — ParseError/ValidationError coverage
+  cli.rs, integration.rs, error_handling.rs, error_context.rs,
+  section_events.rs, snapshot_tests.rs, proptest_suite.rs
 ```
 
 ## Requirements / 必要環境
