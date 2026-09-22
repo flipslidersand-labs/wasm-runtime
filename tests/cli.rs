@@ -227,6 +227,47 @@ fn all_flags_including_timing() {
         .stdout(predicate::str::contains("parse time:"));
 }
 
+// ── --wat (#107) ─────────────────────────────────────────
+
+#[test]
+fn wat_flag_exits_zero_and_starts_with_module() {
+    wasm_dump()
+        .args(["--wat", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(module"));
+}
+
+#[test]
+fn wat_flag_shows_function_types() {
+    wasm_dump()
+        .args(["--wat", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(type (func"));
+}
+
+// ── --explain (#107) ─────────────────────────────────────
+
+#[test]
+fn explain_flag_exits_zero_and_shows_header() {
+    wasm_dump()
+        .args(["--explain", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("explain:"))
+        .stdout(predicate::str::contains("magic"));
+}
+
+#[test]
+fn explain_flag_shows_section_ids() {
+    wasm_dump()
+        .args(["--explain", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("section id:"));
+}
+
 // ── 異常系 ───────────────────────────────────────────────
 
 #[test]
