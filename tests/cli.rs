@@ -170,6 +170,15 @@ fn unknown_flag_exits_nonzero() {
         .stderr(predicate::str::contains("unknown flag"));
 }
 
+#[test]
+fn too_many_positional_arguments_exits_nonzero() {
+    wasm_dump()
+        .args([MINIMAL_WASM, "extra_positional_arg"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("too many positional arguments"));
+}
+
 // ── --timing (#63) ───────────────────────────────────────
 
 #[test]
