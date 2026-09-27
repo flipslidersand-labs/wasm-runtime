@@ -235,4 +235,130 @@ mod tests {
         assert!(wat.contains("(import \"env\" \"abort\""));
         assert!(wat.contains("(func (type 0))"));
     }
+
+    fn import_wat(desc: crate::sections::ImportDesc) -> String {
+        use crate::sections::Import;
+        let module = Module {
+            imports: vec![Import {
+                module: "env".to_string(),
+                name: "x".to_string(),
+                desc,
+            }],
+            ..Module::default()
+        };
+        module_to_wat(&module)
+    }
+
+    #[test]
+    fn import_table_in_wat() {
+        use crate::sections::{ImportDesc, Limits, RefType};
+        let wat = import_wat(ImportDesc::Table {
+            reftype: RefType::FuncRef,
+            limits: Limits { min: 1, max: None },
+        });
+        assert!(wat.contains("(import \"env\" \"x\" (table 1 funcref))"));
+    }
+
+    #[test]
+    fn import_memory_in_wat() {
+        use crate::sections::{ImportDesc, Limits};
+        let wat = import_wat(ImportDesc::Memory(Limits {
+            min: 1,
+            max: Some(2),
+        }));
+        assert!(wat.contains("(import \"env\" \"x\" (memory 1 2))"));
+    }
+
+    #[test]
+    fn import_global_mutable_and_immutable_in_wat() {
+        use crate::sections::ImportDesc;
+        let m = import_wat(ImportDesc::Global {
+            valtype: ValType::I32,
+            mutable: true,
+        });
+        assert!(m.contains("(global (mut i32))"));
+        let i = import_wat(ImportDesc::Global {
+            valtype: ValType::I64,
+            mutable: false,
+        });
+        assert!(i.contains("(global i64)"));
+        assert!(!i.contains("(mut"));
+    }
+
+    #[test]
+    fn local_table_in_wat() {
+        use crate::sections::{Limits, RefType, Table};
+        let module = Module {
+            tables: vec![Table {
+                reftype: RefType::FuncRef,
+                limits: Limits { min: 2, max: None },
+            }],
+            ..Module::default()
+        };
+        assert!(module_to_wat(&module).contains("  (table 2 funcref)\n"));
+    }
+
+    #[test]
+    fn local_memory_in_wat() {
+        use crate::sections::Limits;
+        let module = Module {
+            memories: vec![Limits {
+                min: 1,
+                max: Some(4),
+            }],
+            ..Module::default()
+        };
+        assert!(module_to_wat(&module).contains("  (memory 1 4)\n"));
+    }
+
+    #[test]
+    fn local_mutable_global_in_wat() {
+        use crate::sections::{ConstExpr, Global, GlobalType};
+        let module = Module {
+            globals: vec![
+                Global {
+                    global_type: GlobalType {
+                        valtype: ValType::I32,
+                        mutable: true,
+                    },
+                    init: ConstExpr::I32(7),
+                },
+                Global {
+                    global_type: GlobalType {
+                        valtype: ValType::I64,
+                        mutable: false,
+                    },
+                    init: ConstExpr::I64(9),
+                },
+            ],
+            ..Module::default()
+        };
+        let wat = module_to_wat(&module);
+        assert!(wat.contains("(global (mut i32) (7))"));
+        assert!(wat.contains("(global i64 (9))"));
+    }
+
+    #[test]
+    fn data_segments_in_wat() {
+        use crate::sections::{ConstExpr, DataMode, DataSegment};
+        let module = Module {
+            data: vec![
+                DataSegment {
+                    mode: DataMode::Active {
+                        memory_index: 0,
+                        offset: ConstExpr::I32(16),
+                    },
+                    bytes: vec![1, 2, 3],
+                },
+                DataSegment {
+                    mode: DataMode::Passive,
+                    bytes: vec![1, 2],
+                },
+            ],
+            ..Module::default()
+        };
+        let wat = module_to_wat(&module);
+        assert!(wat.contains("(data (memory 0) (offset 16) \"<3 bytes>\")"));
+        assert!(wat.contains("  (data \"<2 bytes>\")"));
+    }
 }
