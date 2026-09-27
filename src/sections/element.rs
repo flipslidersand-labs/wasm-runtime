@@ -63,7 +63,7 @@ impl fmt::Display for ElementSegment {
 fn read_u32_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u32>, ParseError> {
     let (count, n) = decode_leb128_u32(payload, *pos)?;
     *pos += n;
-    let mut out = Vec::with_capacity(count as usize);
+    let mut out = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         let (v, n) = decode_leb128_u32(payload, *pos)?;
         *pos += n;
@@ -76,7 +76,7 @@ fn read_u32_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u32>, ParseError>
 fn read_expr_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<Vec<u8>>, ParseError> {
     let (count, n) = decode_leb128_u32(payload, *pos)?;
     *pos += n;
-    let mut out = Vec::with_capacity(count as usize);
+    let mut out = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         out.push(super::read_init_expr(payload, pos)?);
     }
@@ -112,7 +112,7 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut segments = Vec::with_capacity(count as usize);
+    let mut segments = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         let (flag, n) = decode_leb128_u32(payload, pos)?;
         pos += n;

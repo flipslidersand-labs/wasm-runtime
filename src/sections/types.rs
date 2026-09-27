@@ -114,7 +114,7 @@ pub fn decode_type_section(payload: &[u8]) -> Result<Vec<FuncType>, ParseError> 
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut types = Vec::with_capacity(count as usize);
+    let mut types = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         if pos >= payload.len() {
             return Err(ParseError::UnexpectedEof);
@@ -134,7 +134,7 @@ pub fn decode_type_section(payload: &[u8]) -> Result<Vec<FuncType>, ParseError> 
 fn read_val_type_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<ValType>, ParseError> {
     let (count, n) = decode_leb128_u32(payload, *pos)?;
     *pos += n;
-    let mut out = Vec::with_capacity(count as usize);
+    let mut out = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         if *pos >= payload.len() {
             return Err(ParseError::UnexpectedEof);
@@ -165,7 +165,7 @@ pub fn decode_table_section(payload: &[u8]) -> Result<Vec<Table>, ParseError> {
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut tables = Vec::with_capacity(count as usize);
+    let mut tables = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         if pos >= payload.len() {
             return Err(ParseError::UnexpectedEof);
@@ -185,7 +185,7 @@ pub fn decode_memory_section(payload: &[u8]) -> Result<Vec<Limits>, ParseError> 
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut memories = Vec::with_capacity(count as usize);
+    let mut memories = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         memories.push(super::read_limits(payload, &mut pos)?);
     }
@@ -199,7 +199,7 @@ pub fn decode_function_section(payload: &[u8]) -> Result<Vec<u32>, ParseError> {
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut indices = Vec::with_capacity(count as usize);
+    let mut indices = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         let (idx, n) = decode_leb128_u32(payload, pos)?;
         pos += n;
