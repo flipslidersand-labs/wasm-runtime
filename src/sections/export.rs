@@ -52,7 +52,7 @@ pub fn decode_export_section(payload: &[u8]) -> Result<Vec<Export>, ParseError> 
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut exports = Vec::with_capacity(count as usize);
+    let mut exports = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         let (name_len, n) = decode_leb128_u32(payload, pos)?;
         pos += n;
