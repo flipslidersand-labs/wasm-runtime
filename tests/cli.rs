@@ -308,3 +308,44 @@ fn invalid_magic_exits_nonzero() {
         .failure()
         .stderr(predicate::str::contains("error:"));
 }
+
+// ── --diff ───────────────────────────────────────────────
+
+#[test]
+fn diff_identical_files_reports_equal() {
+    wasm_dump()
+        .args(["--diff", MINIMAL_WASM, MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("diff:"))
+        .stdout(predicate::str::contains("equal"))
+        .stdout(predicate::str::contains("0 changed, 0 added, 0 removed"));
+}
+
+#[test]
+fn diff_different_files_reports_differences() {
+    wasm_dump()
+        .args(["--diff", MINIMAL_WASM, GLOBALS_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("diff:"))
+        .stdout(predicate::str::contains("0 changed, 0 added, 0 removed").not());
+}
+
+#[test]
+fn diff_with_single_arg_exits_nonzero_with_usage() {
+    wasm_dump()
+        .args(["--diff", MINIMAL_WASM])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Usage: wasm-dump --diff"));
+}
+
+#[test]
+fn diff_nonexistent_file_exits_nonzero_with_cannot_read() {
+    wasm_dump()
+        .args(["--diff", MINIMAL_WASM, "tests/fixtures/does_not_exist.wasm"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot read"));
+}
