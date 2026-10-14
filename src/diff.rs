@@ -1,5 +1,6 @@
 //! Section-level diff between two wasm binaries.
 
+use crate::module::section_name;
 use crate::parser::{section_iter, ParseError};
 use std::fmt;
 
@@ -121,25 +122,6 @@ fn collect_sections(bytes: &[u8]) -> Result<std::collections::BTreeMap<u8, u32>,
         map.insert(hdr.id, hdr.size);
     }
     Ok(map)
-}
-
-fn section_name(id: u8) -> &'static str {
-    match id {
-        0 => "custom",
-        1 => "type",
-        2 => "import",
-        3 => "func",
-        4 => "table",
-        5 => "memory",
-        6 => "global",
-        7 => "export",
-        8 => "start",
-        9 => "element",
-        10 => "code",
-        11 => "data",
-        12 => "datacount",
-        _ => "unknown",
-    }
 }
 
 #[cfg(test)]

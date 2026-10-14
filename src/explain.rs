@@ -3,6 +3,7 @@
 //! Walks the binary from start to finish and emits an [`ExplainLine`] for each
 //! logical group of bytes, stating what those bytes mean.
 
+use crate::module::section_name;
 use crate::parser::decode_leb128_u32;
 use std::fmt;
 
@@ -287,27 +288,6 @@ impl<'a> Cursor<'a> {
     }
 }
 
-// ── Name helpers ─────────────────────────────────────────────────────────────
-
-fn section_name(id: u8) -> &'static str {
-    match id {
-        0 => "custom",
-        1 => "type",
-        2 => "import",
-        3 => "func",
-        4 => "table",
-        5 => "memory",
-        6 => "global",
-        7 => "export",
-        8 => "start",
-        9 => "element",
-        10 => "code",
-        11 => "data",
-        12 => "datacount",
-        _ => "unknown",
-    }
-}
-
 fn val_type_name(b: u8) -> &'static str {
     match b {
         0x7F => "i32",
@@ -436,5 +416,46 @@ mod tests {
         assert!(annotations
             .iter()
             .any(|a| a.contains("section memory payload")));
+    }
+
+    fn annotations(lines: &[ExplainLine]) -> Vec<&str> {
+        lines.iter().map(|l| l.annotation.as_str()).collect()
+    }
+
+    #[test]
+    fn code_section_with_locals_annotated() {
+        // 1 body, size 4: 1 local decl (2 x i32), end
+        let code_payload = &[0x01, 0x04, 0x01, 0x02, 0x7F, 0x0B];
+        let bytes = make_wasm(&[(10, code_payload)]);
+        let a = annotations(&explain_bytes(&bytes)).join("\n");
+        assert!(a.contains("body[0] local declaration count: 1"));
+        assert!(a.contains("body[0] local[0] count: 2"));
+        assert!(a.contains("body[0] local[0] type:"));
+    }
+
+    #[test]
+    fn code_section_body_truncated() {
+        // body_size 5 but only 1 byte remains
+        let code_payload = &[0x01, 0x05, 0x00];
+        let bytes = make_wasm(&[(10, code_payload)]);
+        let a = annotations(&explain_bytes(&bytes)).join("\n");
+        assert!(a.contains("body[0] truncated"));
+    }
+
+    #[test]
+    fn invalid_section_size_leb128() {
+        let mut bytes = header();
+        bytes.push(0x0A);
+        bytes.extend_from_slice(&[0x80; 6]);
+        let a = annotations(&explain_bytes(&bytes)).join("\n");
+        assert!(a.contains("invalid section size LEB128"));
+    }
+
+    #[test]
+    fn section_payload_truncated() {
+        let mut bytes = header();
+        bytes.extend_from_slice(&[0x0A, 0x10, 0x01]);
+        let a = annotations(&explain_bytes(&bytes)).join("\n");
+        assert!(a.contains("section payload truncated (declared 16 bytes)"));
     }
 }

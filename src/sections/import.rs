@@ -47,7 +47,7 @@ pub fn decode_import_section(payload: &[u8]) -> Result<Vec<Import>, ParseError> 
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut imports = Vec::with_capacity(count as usize);
+    let mut imports = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         let module = super::read_name(payload, &mut pos)?;
         let name = super::read_name(payload, &mut pos)?;

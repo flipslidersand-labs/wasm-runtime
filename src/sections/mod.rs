@@ -26,6 +26,15 @@ pub use types::{
 // ── Shared internal helpers ───────────────────────────────────────────────────
 // These are accessible to all submodules via `super::xxx`.
 
+/// Upper-bounds a pre-allocation by the remaining payload size.
+///
+/// A LEB128 `count` is untrusted and may be up to `u32::MAX` regardless of how
+/// many bytes actually follow. Every element occupies at least one byte, so
+/// `count` can never legitimately exceed `payload_len`.
+fn capped_capacity(count: u32, payload_len: usize) -> usize {
+    (count as usize).min(payload_len)
+}
+
 fn read_name(payload: &[u8], pos: &mut usize) -> Result<String, ParseError> {
     let (len, n) = decode_leb128_u32(payload, *pos)?;
     *pos += n;
@@ -144,6 +153,44 @@ fn read_byte_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError>
 mod tests {
     use super::*;
     use crate::parser::ParseError;
+
+    // ── Oversized count guard ─────────────────────────────────────────────────
+
+    // count = 0xFFFFFFFF (LEB128), no elements follow.
+    const HUGE_COUNT: [u8; 5] = [0xFF, 0xFF, 0xFF, 0xFF, 0x0F];
+
+    #[test]
+    fn huge_count_returns_error_not_oom() {
+        assert_eq!(
+            decode_type_section(&HUGE_COUNT),
+            Err(ParseError::UnexpectedEof)
+        );
+        assert!(decode_table_section(&HUGE_COUNT).is_err());
+        assert!(decode_memory_section(&HUGE_COUNT).is_err());
+        assert_eq!(
+            decode_function_section(&HUGE_COUNT),
+            Err(ParseError::UnexpectedEof)
+        );
+        assert!(decode_import_section(&HUGE_COUNT).is_err());
+        assert!(decode_export_section(&HUGE_COUNT).is_err());
+        assert!(decode_global_section(&HUGE_COUNT).is_err());
+        assert!(decode_element_section(&HUGE_COUNT).is_err());
+        assert!(decode_data_section(&HUGE_COUNT).is_err());
+        assert!(decode_code_section(&HUGE_COUNT).is_err());
+    }
+
+    #[test]
+    fn huge_inner_counts_return_error_not_oom() {
+        // type section: 1 type, form 0x60, param count = huge
+        let mut p = vec![0x01, 0x60];
+        p.extend_from_slice(&HUGE_COUNT);
+        assert!(decode_type_section(&p).is_err());
+        // code section: 1 body, size=6, local decl count = huge
+        let mut p = vec![0x01, 0x06];
+        p.extend_from_slice(&HUGE_COUNT);
+        p.push(0x0B);
+        assert!(decode_code_section(&p).is_err());
+    }
 
     // ── Memory section ────────────────────────────────────────────────────────
 
@@ -344,6 +391,36 @@ mod tests {
             decode_import_section(&payload),
             Err(ParseError::UnknownImportKind(0xFF))
         ));
+    }
+
+    #[test]
+    fn import_section_missing_kind_byte() {
+        // count=1, module="env"(3), name="foo"(3), then payload ends before the kind byte.
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"foo");
+        assert_eq!(
+            decode_import_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn import_section_table_missing_reftype_byte() {
+        // count=1, module="env"(3), name="tbl"(3), kind=0x01(Table), then payload ends
+        // before the reftype byte.
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"env");
+        payload.extend_from_slice(&[0x03]);
+        payload.extend_from_slice(b"tbl");
+        payload.push(0x01);
+        assert_eq!(
+            decode_import_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
     }
 
     // ── Type section ──────────────────────────────────────────────────────────
@@ -694,6 +771,27 @@ mod tests {
             decode_export_section(&payload),
             Err(ParseError::UnknownExportKind(0xFF))
         ));
+    }
+
+    #[test]
+    fn export_section_name_len_exceeds_payload() {
+        // count=1, name_len=10 but only 1 byte of name data remains
+        let payload = vec![0x01, 0x0A, b'x'];
+        assert_eq!(
+            decode_export_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn export_section_missing_kind_byte() {
+        // count=1, name="x"(1 byte), no kind byte follows
+        let mut payload = vec![0x01, 0x01];
+        payload.extend_from_slice(b"x");
+        assert_eq!(
+            decode_export_section(&payload),
+            Err(ParseError::UnexpectedEof)
+        );
     }
 
     // ── Code section ─────────────────────────────────────────────────────────

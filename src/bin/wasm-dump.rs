@@ -3,7 +3,7 @@ use std::time::Instant;
 use wasm_runtime::{
     diff::{diff_modules, diff_summary},
     explain::explain_bytes,
-    module::parse_module,
+    module::{parse_module, section_name},
     parser::{parse_header, section_iter, ParseError},
     sections::{
         decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
@@ -324,42 +324,15 @@ fn print_entries<T: std::fmt::Display>(res: Result<Vec<T>, ParseError>) {
     }
 }
 
-/// Short lowercase name used in the compact section list.
-fn section_name(id: u8) -> &'static str {
-    match id {
-        0 => "custom",
-        1 => "type",
-        2 => "import",
-        3 => "func",
-        4 => "table",
-        5 => "memory",
-        6 => "global",
-        7 => "export",
-        8 => "start",
-        9 => "element",
-        10 => "code",
-        11 => "data",
-        12 => "datacount",
-        _ => "unknown",
+/// Capitalized title used in the `--verbose` per-section header, derived from
+/// the shared lowercase [`section_name`].
+fn section_title(id: u8) -> String {
+    let name = section_name(id);
+    let mut title = String::with_capacity(name.len());
+    let mut chars = name.chars();
+    if let Some(first) = chars.next() {
+        title.extend(first.to_uppercase());
     }
-}
-
-/// Capitalized title used in the `--verbose` per-section header.
-fn section_title(id: u8) -> &'static str {
-    match id {
-        0 => "Custom",
-        1 => "Type",
-        2 => "Import",
-        3 => "Function",
-        4 => "Table",
-        5 => "Memory",
-        6 => "Global",
-        7 => "Export",
-        8 => "Start",
-        9 => "Element",
-        10 => "Code",
-        11 => "Data",
-        12 => "DataCount",
-        _ => "Unknown",
-    }
+    title.push_str(chars.as_str());
+    title
 }

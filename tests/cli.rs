@@ -170,6 +170,15 @@ fn unknown_flag_exits_nonzero() {
         .stderr(predicate::str::contains("unknown flag"));
 }
 
+#[test]
+fn too_many_positional_arguments_exits_nonzero() {
+    wasm_dump()
+        .args([MINIMAL_WASM, "extra_positional_arg"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("too many positional arguments"));
+}
+
 // ── --timing (#63) ───────────────────────────────────────
 
 #[test]
@@ -227,6 +236,47 @@ fn all_flags_including_timing() {
         .stdout(predicate::str::contains("parse time:"));
 }
 
+// ── --wat (#107) ─────────────────────────────────────────
+
+#[test]
+fn wat_flag_exits_zero_and_starts_with_module() {
+    wasm_dump()
+        .args(["--wat", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(module"));
+}
+
+#[test]
+fn wat_flag_shows_function_types() {
+    wasm_dump()
+        .args(["--wat", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(type (func"));
+}
+
+// ── --explain (#107) ─────────────────────────────────────
+
+#[test]
+fn explain_flag_exits_zero_and_shows_header() {
+    wasm_dump()
+        .args(["--explain", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("explain:"))
+        .stdout(predicate::str::contains("magic"));
+}
+
+#[test]
+fn explain_flag_shows_section_ids() {
+    wasm_dump()
+        .args(["--explain", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("section id:"));
+}
+
 // ── 異常系 ───────────────────────────────────────────────
 
 #[test]
@@ -257,4 +307,45 @@ fn invalid_magic_exits_nonzero() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("error:"));
+}
+
+// ── --diff ───────────────────────────────────────────────
+
+#[test]
+fn diff_identical_files_reports_equal() {
+    wasm_dump()
+        .args(["--diff", MINIMAL_WASM, MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("diff:"))
+        .stdout(predicate::str::contains("equal"))
+        .stdout(predicate::str::contains("0 changed, 0 added, 0 removed"));
+}
+
+#[test]
+fn diff_different_files_reports_differences() {
+    wasm_dump()
+        .args(["--diff", MINIMAL_WASM, GLOBALS_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("diff:"))
+        .stdout(predicate::str::contains("0 changed, 0 added, 0 removed").not());
+}
+
+#[test]
+fn diff_with_single_arg_exits_nonzero_with_usage() {
+    wasm_dump()
+        .args(["--diff", MINIMAL_WASM])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Usage: wasm-dump --diff"));
+}
+
+#[test]
+fn diff_nonexistent_file_exits_nonzero_with_cannot_read() {
+    wasm_dump()
+        .args(["--diff", MINIMAL_WASM, "tests/fixtures/does_not_exist.wasm"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot read"));
 }
