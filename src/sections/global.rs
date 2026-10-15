@@ -124,7 +124,7 @@ pub fn decode_global_section(payload: &[u8]) -> Result<Vec<Global>, ParseError> 
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut globals = Vec::with_capacity(count as usize);
+    let mut globals = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         let global_type = super::read_global_type(payload, &mut pos)?;
         let init_bytes = super::read_init_expr(payload, &mut pos)?;
