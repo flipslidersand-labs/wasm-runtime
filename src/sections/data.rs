@@ -45,7 +45,7 @@ pub fn decode_data_section(payload: &[u8]) -> Result<Vec<DataSegment>, ParseErro
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut segments = Vec::with_capacity(count as usize);
+    let mut segments = Vec::with_capacity(super::capped_capacity(count, payload.len()));
     for _ in 0..count {
         let (flag, n) = decode_leb128_u32(payload, pos)?;
         pos += n;
