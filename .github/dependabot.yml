@@ -18,3 +18,6 @@ updates:
     labels:
       - dependencies
       - ci
+    ignore:
+      # ref がそのまま Rust のバージョン指定を兼ねる。bump すると存在しない版 (例: 1.120.0) で msrv が壊れる
+      - dependency-name: "dtolnay/rust-toolchain"
