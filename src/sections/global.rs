@@ -131,5 +131,6 @@ pub fn decode_global_section(payload: &[u8]) -> Result<Vec<Global>, ParseError> 
         let init = parse_const_expr(&init_bytes)?;
         globals.push(Global { global_type, init });
     }
+    super::ensure_consumed(payload, pos)?;
     Ok(globals)
 }

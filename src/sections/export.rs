@@ -77,5 +77,6 @@ pub fn decode_export_section(payload: &[u8]) -> Result<Vec<Export>, ParseError> 
 
         exports.push(Export { name, kind, index });
     }
+    super::ensure_consumed(payload, pos)?;
     Ok(exports)
 }
