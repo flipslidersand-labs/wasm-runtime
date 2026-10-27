@@ -40,7 +40,7 @@ impl std::fmt::Display for ParseError {
             ParseError::InvalidMutability(b) => write!(f, "invalid mutability byte: {:#04X}", b),
             ParseError::InvalidUtf8 => write!(f, "name is not valid UTF-8"),
             ParseError::SizeMismatch => {
-                write!(f, "declared function body size does not match payload")
+                write!(f, "declared size does not match payload")
             }
             ParseError::UnsupportedInitExpr(b) => {
                 write!(f, "unsupported init_expr opcode: {:#04X}", b)
