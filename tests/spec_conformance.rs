@@ -107,7 +107,14 @@ fn run_file(
                 Err(_) => tally.malformed_rejected += 1,
                 Ok(()) => {
                     let text = cmd["text"].as_str().unwrap_or("");
-                    fails.insert(key, format!("malformed mvp-gap-candidate # {text}"));
+                    // 不明なセクション ID は、dump ツールが "unknown" として表示できるよう
+                    // 意図的に受理している（tests/section_events.rs）。仕様上は malformed。
+                    let category = if text == "malformed section id" {
+                        "intentional-lenient"
+                    } else {
+                        "mvp-gap-candidate"
+                    };
+                    fails.insert(key, format!("malformed {category} # {text}"));
                 }
             }
         }
