@@ -81,9 +81,9 @@ sections:
 cargo test
 ```
 
-184 tests covering header parsing, LEB128 decoding, section iteration, all section decoders, cross-section validation, and error handling.
+Tests covering header parsing, LEB128 decoding, section iteration, all section decoders, cross-section validation, and error handling.
 
-ヘッダーパース・LEB128 デコード・全セクションデコーダー・セクション横断バリデーション・エラーハンドリングを網羅する 184 件のテスト。
+ヘッダーパース・LEB128 デコード・全セクションデコーダー・セクション横断バリデーション・エラーハンドリングを網羅するテスト。
 
 ## License
 
