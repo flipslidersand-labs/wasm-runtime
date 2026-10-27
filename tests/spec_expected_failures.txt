@@ -1,0 +1,74 @@
+binary:binary.101.wasm malformed mvp-gap-candidate # unexpected end of section or function
+binary:binary.103.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.107.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.108.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.109.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.110.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.111.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.112.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.113.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.114.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.115.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.116.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.117.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.118.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.119.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.120.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.125.wasm malformed mvp-gap-candidate # unexpected content after last section
+binary:binary.126.wasm malformed mvp-gap-candidate # illegal opcode ff
+binary:binary.32.wasm malformed mvp-gap-candidate # malformed section id
+binary:binary.33.wasm malformed mvp-gap-candidate # malformed section id
+binary:binary.34.wasm malformed mvp-gap-candidate # malformed section id
+binary:binary.35.wasm malformed mvp-gap-candidate # malformed section id
+binary:binary.36.wasm malformed mvp-gap-candidate # malformed section id
+binary:binary.37.wasm malformed mvp-gap-candidate # END opcode expected
+binary:binary.38.wasm malformed mvp-gap-candidate # unexpected end of section or function
+binary:binary.39.wasm malformed mvp-gap-candidate # section size mismatch
+binary:binary.43.wasm malformed mvp-gap-candidate # too many locals
+binary:binary.44.wasm malformed mvp-gap-candidate # too many locals
+binary:binary.56.wasm malformed mvp-gap-candidate # data count section required
+binary:binary.57.wasm malformed mvp-gap-candidate # data count section required
+binary:binary.64.wasm malformed mvp-gap-candidate # section size mismatch
+binary:binary.73.wasm malformed mvp-gap-candidate # section size mismatch
+binary:binary.87.wasm malformed mvp-gap-candidate # section size mismatch
+binary:binary.90.wasm malformed mvp-gap-candidate # section size mismatch
+binary:binary.94.wasm malformed mvp-gap-candidate # section size mismatch
+binary:binary.97.wasm malformed mvp-gap-candidate # section size mismatch
+binary:binary.99.wasm malformed mvp-gap-candidate # section size mismatch
+data:data.27.wasm valid post-mvp # unsupported init_expr opcode: 0x6A
+data:data.28.wasm valid post-mvp # unsupported init_expr opcode: 0x6B
+data:data.29.wasm valid post-mvp # unsupported init_expr opcode: 0x6C
+data:data.30.wasm valid post-mvp # unsupported init_expr opcode: 0x6B
+elem:elem.106.wasm valid post-mvp # unknown value type: 0x6F
+elem:elem.108.wasm valid post-mvp # unknown value type: 0x70
+elem:elem.109.wasm valid post-mvp # unknown value type: 0x70
+elem:elem.110.wasm valid post-mvp # unsupported init_expr opcode: 0x6A
+elem:elem.111.wasm valid post-mvp # unsupported init_expr opcode: 0x6B
+elem:elem.112.wasm valid post-mvp # unsupported init_expr opcode: 0x6C
+elem:elem.113.wasm valid post-mvp # unsupported init_expr opcode: 0x6B
+elem:elem.2.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.31.wasm valid post-mvp # unknown reftype: 0x64
+elem:elem.47.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.48.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.49.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.50.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.51.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.52.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.53.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.54.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.57.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.58.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.59.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.60.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.61.wasm valid post-mvp # unknown reftype: 0x40
+elem:elem.62.wasm valid post-mvp # unknown reftype: 0x40
+global:global.0.wasm valid post-mvp # unknown value type: 0x6F
+global:global.50.wasm valid post-mvp # unknown value type: 0x70
+imports:imports.0.wasm valid post-mvp # unknown export kind: 0x04
+imports:imports.5.wasm valid post-mvp # unknown import kind: 0x04
+table:table.10.wasm valid post-mvp # unknown reftype: 0x63
+table:table.13.wasm valid post-mvp # unknown reftype: 0x40
+table:table.14.wasm valid post-mvp # unknown reftype: 0x40
+table:table.15.wasm valid post-mvp # unknown reftype: 0x40
+table:table.32.wasm valid post-mvp # unknown value type: 0x64
+table:table.33.wasm valid post-mvp # unknown value type: 0x70

@@ -85,6 +85,24 @@ Tests covering header parsing, LEB128 decoding, section iteration, all section d
 
 ヘッダーパース・LEB128 デコード・全セクションデコーダー・セクション横断バリデーション・エラーハンドリングを網羅するテスト。
 
+## Conformance / 仕様適合性
+
+Measured against the official [WebAssembly testsuite](https://github.com/WebAssembly/testsuite) (commit `44f1503`, 11 files: binary, custom, data, elem, func, global, imports, memory, start, table, type). Needs `wasm-tools`; skipped otherwise.
+公式 testsuite（コミット `44f1503`、11 ファイル）で測定。`wasm-tools` が必要で、無ければ skip。
+
+```bash
+git clone --depth 1 https://github.com/WebAssembly/testsuite.git /tmp/testsuite
+SPEC_TESTSUITE_DIR=/tmp/testsuite cargo test --test spec_conformance -- --nocapture
+```
+
+| | Result / 結果 | Note / 備考 |
+| --- | --- | --- |
+| Valid modules accepted / 正しいモジュールの受理 | 210 / 247 | All 37 failures use post-MVP features (reference types, extended const, tags) / 失敗 37 件は全て MVP 後の拡張 |
+| Malformed binaries rejected / 壊れたバイナリの拒否 | 83 / 120 | 37 are MVP-strictness candidates, being classified in #150 / 37 件は MVP の厳格さの穴の候補（#150 で分類中） |
+
+The failure set is pinned in `tests/spec_expected_failures.txt`; the test fails when it changes (regression or an unrecorded improvement).
+失敗の集合は `tests/spec_expected_failures.txt` に固定し、変わるとテストが落ちる。
+
 ## License
 
 MIT
