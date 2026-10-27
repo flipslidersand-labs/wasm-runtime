@@ -128,6 +128,7 @@ pub fn decode_type_section(payload: &[u8]) -> Result<Vec<FuncType>, ParseError> 
         let results = read_val_type_vec(payload, &mut pos)?;
         types.push(FuncType { params, results });
     }
+    super::ensure_consumed(payload, pos)?;
     Ok(types)
 }
 
@@ -175,6 +176,7 @@ pub fn decode_table_section(payload: &[u8]) -> Result<Vec<Table>, ParseError> {
         let limits = super::read_limits(payload, &mut pos)?;
         tables.push(Table { reftype, limits });
     }
+    super::ensure_consumed(payload, pos)?;
     Ok(tables)
 }
 
@@ -189,6 +191,7 @@ pub fn decode_memory_section(payload: &[u8]) -> Result<Vec<Limits>, ParseError> 
     for _ in 0..count {
         memories.push(super::read_limits(payload, &mut pos)?);
     }
+    super::ensure_consumed(payload, pos)?;
     Ok(memories)
 }
 
@@ -205,5 +208,6 @@ pub fn decode_function_section(payload: &[u8]) -> Result<Vec<u32>, ParseError> {
         pos += n;
         indices.push(idx);
     }
+    super::ensure_consumed(payload, pos)?;
     Ok(indices)
 }

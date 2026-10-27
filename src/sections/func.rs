@@ -73,5 +73,6 @@ pub fn decode_code_section(payload: &[u8]) -> Result<Vec<FuncBody>, ParseError> 
         bodies.push(FuncBody { locals, expr });
     }
 
+    super::ensure_consumed(payload, pos)?;
     Ok(bodies)
 }

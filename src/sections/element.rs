@@ -224,5 +224,6 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
         };
         segments.push(seg);
     }
+    super::ensure_consumed(payload, pos)?;
     Ok(segments)
 }
