@@ -77,5 +77,6 @@ pub fn decode_data_section(payload: &[u8]) -> Result<Vec<DataSegment>, ParseErro
         let bytes = super::read_byte_vec(payload, &mut pos)?;
         segments.push(DataSegment { mode, bytes });
     }
+    super::ensure_consumed(payload, pos)?;
     Ok(segments)
 }

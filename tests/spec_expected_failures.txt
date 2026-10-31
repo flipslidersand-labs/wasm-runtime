@@ -12,13 +12,6 @@ binary:binary.43.wasm malformed mvp-gap-candidate # too many locals
 binary:binary.44.wasm malformed mvp-gap-candidate # too many locals
 binary:binary.56.wasm malformed mvp-gap-candidate # data count section required
 binary:binary.57.wasm malformed mvp-gap-candidate # data count section required
-binary:binary.64.wasm malformed mvp-gap-candidate # section size mismatch
-binary:binary.73.wasm malformed mvp-gap-candidate # section size mismatch
-binary:binary.87.wasm malformed mvp-gap-candidate # section size mismatch
-binary:binary.90.wasm malformed mvp-gap-candidate # section size mismatch
-binary:binary.94.wasm malformed mvp-gap-candidate # section size mismatch
-binary:binary.97.wasm malformed mvp-gap-candidate # section size mismatch
-binary:binary.99.wasm malformed mvp-gap-candidate # section size mismatch
 data:data.27.wasm valid post-mvp # unsupported init_expr opcode: 0x6A
 data:data.28.wasm valid post-mvp # unsupported init_expr opcode: 0x6B
 data:data.29.wasm valid post-mvp # unsupported init_expr opcode: 0x6C

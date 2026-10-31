@@ -86,5 +86,6 @@ pub fn decode_import_section(payload: &[u8]) -> Result<Vec<Import>, ParseError> 
 
         imports.push(Import { module, name, desc });
     }
+    super::ensure_consumed(payload, pos)?;
     Ok(imports)
 }
