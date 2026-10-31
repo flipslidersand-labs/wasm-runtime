@@ -33,13 +33,8 @@ pub fn module_to_wat(module: &Module) -> String {
         let desc = match &imp.desc {
             ImportDesc::Func(type_idx) => format!("(func (type {}))", type_idx),
             ImportDesc::Table { reftype, limits } => {
-                let max = limits.max.map_or(String::new(), |m| format!(" {}", m));
-                format!(
-                    "(table {} {}{})",
-                    limits.min,
-                    max.trim(),
-                    reftype_str(reftype)
-                )
+                let max = limits.max.map_or(String::new(), |m| format!("{} ", m));
+                format!("(table {} {}{})", limits.min, max, reftype_str(reftype))
             }
             ImportDesc::Memory(limits) => {
                 let max = limits.max.map_or(String::new(), |m| format!(" {}", m));
@@ -67,11 +62,11 @@ pub fn module_to_wat(module: &Module) -> String {
         let max = table
             .limits
             .max
-            .map_or(String::new(), |m| format!(" {}", m));
+            .map_or(String::new(), |m| format!("{} ", m));
         out.push_str(&format!(
             "  (table {} {}{})\n",
             table.limits.min,
-            max.trim_start(),
+            max,
             reftype_str(&table.reftype)
         ));
     }
@@ -260,6 +255,19 @@ mod tests {
     }
 
     #[test]
+    fn import_table_with_max_in_wat() {
+        use crate::sections::{ImportDesc, Limits, RefType};
+        let wat = import_wat(ImportDesc::Table {
+            reftype: RefType::FuncRef,
+            limits: Limits {
+                min: 1,
+                max: Some(10),
+            },
+        });
+        assert!(wat.contains("(import \"env\" \"x\" (table 1 10 funcref))"));
+    }
+
+    #[test]
     fn import_memory_in_wat() {
         use crate::sections::{ImportDesc, Limits};
         let wat = import_wat(ImportDesc::Memory(Limits {
@@ -296,6 +304,22 @@ mod tests {
             ..Module::default()
         };
         assert!(module_to_wat(&module).contains("  (table 2 funcref)\n"));
+    }
+
+    #[test]
+    fn local_table_with_max_in_wat() {
+        use crate::sections::{Limits, RefType, Table};
+        let module = Module {
+            tables: vec![Table {
+                reftype: RefType::FuncRef,
+                limits: Limits {
+                    min: 2,
+                    max: Some(10),
+                },
+            }],
+            ..Module::default()
+        };
+        assert!(module_to_wat(&module).contains("  (table 2 10 funcref)\n"));
     }
 
     #[test]
