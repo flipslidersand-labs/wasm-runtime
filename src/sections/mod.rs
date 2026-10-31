@@ -35,6 +35,16 @@ fn capped_capacity(count: u32, payload_len: usize) -> usize {
     (count as usize).min(payload_len)
 }
 
+/// Rejects a section whose declared size is larger than what its decoded
+/// content used (trailing bytes after the last entry).
+fn ensure_consumed(payload: &[u8], pos: usize) -> Result<(), ParseError> {
+    if pos == payload.len() {
+        Ok(())
+    } else {
+        Err(ParseError::SizeMismatch)
+    }
+}
+
 fn read_name(payload: &[u8], pos: &mut usize) -> Result<String, ParseError> {
     let (len, n) = decode_leb128_u32(payload, *pos)?;
     *pos += n;
