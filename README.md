@@ -41,6 +41,12 @@ tests/
   section_events.rs, snapshot_tests.rs, proptest_suite.rs
 ```
 
+## Design decisions / 設計判断（ADR）
+
+- [Design error types first](docs/adr/ADR-001-design-error-types-first.md) — エラー型を先に設計
+- [Property-test LEB128](docs/adr/ADR-002-property-test-leb128.md) — LEB128 をプロパティテストで検証
+- [Unify const expressions](docs/adr/ADR-003-unify-const-expr.md) — 定数式を `ConstExpr` に統一
+
 ## Requirements / 必要環境
 
 - Rust ≥ 1.65.0 (edition 2021)
@@ -81,9 +87,27 @@ sections:
 cargo test
 ```
 
-184 tests covering header parsing, LEB128 decoding, section iteration, all section decoders, cross-section validation, and error handling.
+Tests covering header parsing, LEB128 decoding, section iteration, all section decoders, cross-section validation, and error handling.
 
-ヘッダーパース・LEB128 デコード・全セクションデコーダー・セクション横断バリデーション・エラーハンドリングを網羅する 184 件のテスト。
+ヘッダーパース・LEB128 デコード・全セクションデコーダー・セクション横断バリデーション・エラーハンドリングを網羅するテスト。
+
+## Conformance / 仕様適合性
+
+Measured against the official [WebAssembly testsuite](https://github.com/WebAssembly/testsuite) (commit `44f1503`, 11 files: binary, custom, data, elem, func, global, imports, memory, start, table, type). Needs `wasm-tools`; skipped otherwise.
+公式 testsuite（コミット `44f1503`、11 ファイル）で測定。`wasm-tools` が必要で、無ければ skip。
+
+```bash
+git clone --depth 1 https://github.com/WebAssembly/testsuite.git /tmp/testsuite
+SPEC_TESTSUITE_DIR=/tmp/testsuite cargo test --test spec_conformance -- --nocapture
+```
+
+| | Result / 結果 | Note / 備考 |
+| --- | --- | --- |
+| Valid modules accepted / 正しいモジュールの受理 | 210 / 247 | All 37 failures use post-MVP features (reference types, extended const, tags) / 失敗 37 件は全て MVP 後の拡張 |
+| Malformed binaries rejected / 壊れたバイナリの拒否 | 106 / 120 | 5 unknown section ids are accepted on purpose (shown as `unknown` by the dump tool); the other 9 need function-body (opcode-level) checks, tracked in #150 / 不明なセクション ID 5 件は dump ツールが表示するため意図的に受理、残り 9 件は関数本体（命令レベル）の検査が要り、#150 で追跡 |
+
+The failure set is pinned in `tests/spec_expected_failures.txt`; the test fails when it changes (regression or an unrecorded improvement).
+失敗の集合は `tests/spec_expected_failures.txt` に固定し、変わるとテストが落ちる。
 
 ## License
 
