@@ -41,6 +41,12 @@ tests/
   section_events.rs, snapshot_tests.rs, proptest_suite.rs
 ```
 
+## Design decisions / 設計判断（ADR）
+
+- [Design error types first](docs/adr/ADR-001-design-error-types-first.md) — エラー型を先に設計
+- [Property-test LEB128](docs/adr/ADR-002-property-test-leb128.md) — LEB128 をプロパティテストで検証
+- [Unify const expressions](docs/adr/ADR-003-unify-const-expr.md) — 定数式を `ConstExpr` に統一
+
 ## Requirements / 必要環境
 
 - Rust ≥ 1.65.0 (edition 2021)
