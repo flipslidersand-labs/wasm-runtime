@@ -19,6 +19,7 @@ pub enum ParseError {
     UnsupportedInitExpr(u8),
     UnsupportedDataFlag(u8),
     UnsupportedElementFlag(u8),
+    SectionOutOfOrder(u8),
 }
 
 impl std::fmt::Display for ParseError {
@@ -39,7 +40,7 @@ impl std::fmt::Display for ParseError {
             ParseError::InvalidMutability(b) => write!(f, "invalid mutability byte: {:#04X}", b),
             ParseError::InvalidUtf8 => write!(f, "name is not valid UTF-8"),
             ParseError::SizeMismatch => {
-                write!(f, "declared function body size does not match payload")
+                write!(f, "declared size does not match payload")
             }
             ParseError::UnsupportedInitExpr(b) => {
                 write!(f, "unsupported init_expr opcode: {:#04X}", b)
@@ -49,6 +50,9 @@ impl std::fmt::Display for ParseError {
             }
             ParseError::UnsupportedElementFlag(b) => {
                 write!(f, "unsupported element segment flag: {:#04X}", b)
+            }
+            ParseError::SectionOutOfOrder(b) => {
+                write!(f, "section {:#04X} is duplicated or out of order", b)
             }
         }
     }
@@ -196,12 +200,32 @@ pub struct SectionHeader {
 /// Returns an iterator over section headers in a wasm binary.
 /// `bytes` must include the 8-byte module header.
 pub fn section_iter(bytes: &[u8]) -> SectionIter<'_> {
-    SectionIter { bytes, pos: 8 }
+    SectionIter {
+        bytes,
+        pos: 8,
+        last_rank: 0,
+    }
+}
+
+/// Position of a non-custom section in the required order (type, import,
+/// function, table, memory, tag, global, export, start, element, datacount,
+/// code, data). Custom sections (id 0) may appear anywhere and have no rank.
+fn section_rank(id: u8) -> Option<u8> {
+    match id {
+        1..=5 => Some(id),
+        13 => Some(6),
+        6..=9 => Some(id + 1),
+        12 => Some(11),
+        10 => Some(12),
+        11 => Some(13),
+        _ => None,
+    }
 }
 
 pub struct SectionIter<'a> {
     bytes: &'a [u8],
     pos: usize,
+    last_rank: u8,
 }
 
 impl<'a> Iterator for SectionIter<'a> {
@@ -214,6 +238,18 @@ impl<'a> Iterator for SectionIter<'a> {
 
         let id = self.bytes[self.pos];
         self.pos += 1;
+
+        if id != 0 {
+            // Unknown ids have no rank: they are passed through (as an "unknown"
+            // event) so the dump tool can still show them. The spec says such
+            // binaries are malformed; the conformance baseline records this.
+            if let Some(rank) = section_rank(id) {
+                if rank <= self.last_rank {
+                    return Some(Err(ParseError::SectionOutOfOrder(id)));
+                }
+                self.last_rank = rank;
+            }
+        }
 
         let (size, consumed) = match decode_leb128_u32(self.bytes, self.pos) {
             Ok(v) => v,
