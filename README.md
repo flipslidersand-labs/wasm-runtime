@@ -103,7 +103,7 @@ SPEC_TESTSUITE_DIR=/tmp/testsuite cargo test --test spec_conformance -- --nocapt
 
 | | Result / 結果 | Note / 備考 |
 | --- | --- | --- |
-| Valid modules accepted / 正しいモジュールの受理 | 210 / 247 | All 37 failures use post-MVP features (reference types, extended const, tags) / 失敗 37 件は全て MVP 後の拡張 |
+| Valid modules accepted / 正しいモジュールの受理 | 210 / 247 | All 37 failures use post-MVP features (reference types, extended const, tags); `wasm-tools validate -f mvp` rejects all 37 too / 失敗 37 件は全て MVP 後の拡張で、`wasm-tools validate -f mvp` でも 37 件とも無効 |
 | Malformed binaries rejected / 壊れたバイナリの拒否 | 106 / 120 | 5 unknown section ids are accepted on purpose (shown as `unknown` by the dump tool); the other 9 need function-body (opcode-level) checks, tracked in #150 / 不明なセクション ID 5 件は dump ツールが表示するため意図的に受理、残り 9 件は関数本体（命令レベル）の検査が要り、#150 で追跡 |
 
 The failure set is pinned in `tests/spec_expected_failures.txt`; the test fails when it changes (regression or an unrecorded improvement).
