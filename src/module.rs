@@ -9,8 +9,9 @@ use crate::sections::{
     decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
     decode_element_section, decode_export_section, decode_function_section, decode_global_section,
     decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
-    decode_type_section, CustomSection, DataSegment, ElementInit, ElementMode, ElementSegment,
-    Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits, Table,
+    decode_type_section, scan_expr, CustomSection, DataSegment, ElementInit, ElementMode,
+    ElementSegment, Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits,
+    Table,
 };
 use std::fmt;
 
@@ -188,6 +189,8 @@ pub enum ValidationError {
     StartFuncIndexOutOfRange { index: u32, func_space: usize },
     /// The datacount section disagrees with the actual data segment count.
     DataCountMismatch { declared: u32, actual: usize },
+    /// A function uses `memory.init` or `data.drop`, which need a datacount section.
+    DataCountRequired,
 }
 
 impl fmt::Display for ValidationError {
@@ -232,6 +235,10 @@ impl fmt::Display for ValidationError {
                 f,
                 "datacount section declares {} segments but data section has {}",
                 declared, actual
+            ),
+            ValidationError::DataCountRequired => write!(
+                f,
+                "memory.init or data.drop is used but there is no datacount section"
             ),
         }
     }
@@ -352,6 +359,17 @@ impl Module {
                     actual: self.data.len(),
                 });
             }
+        }
+
+        // 7. memory.init and data.drop refer to data segments by index, which the
+        //    binary format only allows when a datacount section is present.
+        if self.data_count.is_none()
+            && self
+                .code
+                .iter()
+                .any(|b| matches!(scan_expr(&b.expr), Ok(info) if info.uses_data_index))
+        {
+            return Err(ValidationError::DataCountRequired);
         }
 
         Ok(())
@@ -672,6 +690,42 @@ mod tests {
                 actual: 1,
             })
         );
+    }
+
+    fn module_with_body(expr: Vec<u8>, data_count: Option<u32>) -> Module {
+        Module {
+            types: vec![func_type()],
+            functions: vec![0],
+            code: vec![FuncBody {
+                locals: vec![],
+                expr,
+            }],
+            data_count,
+            ..Module::default()
+        }
+    }
+
+    #[test]
+    fn data_drop_without_datacount_is_rejected() {
+        // data.drop 0; end (spec binary.57)
+        let module = module_with_body(vec![0xFC, 0x09, 0x00, 0x0B], None);
+        assert_eq!(module.validate(), Err(ValidationError::DataCountRequired));
+    }
+
+    #[test]
+    fn memory_init_without_datacount_is_rejected() {
+        // memory.init data 0 mem 0; end (spec binary.56)
+        let module = module_with_body(vec![0xFC, 0x08, 0x00, 0x00, 0x0B], None);
+        assert_eq!(module.validate(), Err(ValidationError::DataCountRequired));
+    }
+
+    #[test]
+    fn data_drop_with_datacount_or_other_bulk_ops_without_it_is_valid() {
+        let with = module_with_body(vec![0xFC, 0x09, 0x00, 0x0B], Some(0));
+        assert_eq!(with.validate(), Ok(()));
+        // memory.fill needs no data index, so no datacount is required
+        let fill = module_with_body(vec![0xFC, 0x0B, 0x00, 0x0B], None);
+        assert_eq!(fill.validate(), Ok(()));
     }
 
     #[test]

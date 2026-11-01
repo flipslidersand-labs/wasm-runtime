@@ -20,6 +20,12 @@ pub enum ParseError {
     UnsupportedDataFlag(u8),
     UnsupportedElementFlag(u8),
     SectionOutOfOrder(u8),
+    /// A function body contains an opcode this parser does not know.
+    UnknownOpcode(u8),
+    /// A function body is not closed by its final `end` (0x0B).
+    MissingEnd,
+    /// A function declares more than `u32::MAX` locals in total.
+    TooManyLocals,
 }
 
 impl std::fmt::Display for ParseError {
@@ -54,6 +60,9 @@ impl std::fmt::Display for ParseError {
             ParseError::SectionOutOfOrder(b) => {
                 write!(f, "section {:#04X} is duplicated or out of order", b)
             }
+            ParseError::UnknownOpcode(b) => write!(f, "unknown opcode: {:#04X}", b),
+            ParseError::MissingEnd => write!(f, "function body is not closed by an end opcode"),
+            ParseError::TooManyLocals => write!(f, "too many locals"),
         }
     }
 }
