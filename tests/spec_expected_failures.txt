@@ -1,17 +1,8 @@
-binary:binary.101.wasm malformed mvp-gap-candidate # unexpected end of section or function
-binary:binary.126.wasm malformed mvp-gap-candidate # illegal opcode ff
 binary:binary.32.wasm malformed intentional-lenient # malformed section id
 binary:binary.33.wasm malformed intentional-lenient # malformed section id
 binary:binary.34.wasm malformed intentional-lenient # malformed section id
 binary:binary.35.wasm malformed intentional-lenient # malformed section id
 binary:binary.36.wasm malformed intentional-lenient # malformed section id
-binary:binary.37.wasm malformed mvp-gap-candidate # END opcode expected
-binary:binary.38.wasm malformed mvp-gap-candidate # unexpected end of section or function
-binary:binary.39.wasm malformed mvp-gap-candidate # section size mismatch
-binary:binary.43.wasm malformed mvp-gap-candidate # too many locals
-binary:binary.44.wasm malformed mvp-gap-candidate # too many locals
-binary:binary.56.wasm malformed mvp-gap-candidate # data count section required
-binary:binary.57.wasm malformed mvp-gap-candidate # data count section required
 data:data.27.wasm valid post-mvp # unsupported init_expr opcode: 0x6A
 data:data.28.wasm valid post-mvp # unsupported init_expr opcode: 0x6B
 data:data.29.wasm valid post-mvp # unsupported init_expr opcode: 0x6C

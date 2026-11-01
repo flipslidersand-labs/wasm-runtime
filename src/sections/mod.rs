@@ -14,6 +14,7 @@ pub use custom::{decode_custom_section, decode_name_section, CustomSection, Name
 pub use data::{decode_data_section, DataMode, DataSegment};
 pub use element::{decode_element_section, ElementInit, ElementMode, ElementSegment};
 pub use export::{decode_export_section, Export, ExportKind};
+pub(crate) use func::scan_expr;
 pub use func::{decode_code_section, FuncBody, LocalDecl};
 pub use global::{decode_global_section, parse_const_expr, ConstExpr, Global, GlobalType};
 pub use import::{decode_import_section, Import, ImportDesc};
