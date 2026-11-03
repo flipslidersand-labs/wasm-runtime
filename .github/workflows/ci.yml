@@ -19,10 +19,10 @@ jobs:
       clippy-args: "--all-targets"
       test-args: "--all"
       coverage-threshold: 80 # 実測(2026-09-21) 90.09%。段階引き上げ余地を残して初期値を設定
-      runner: ubuntu-latest
+      runner: ${{ vars.GATE_RUNNER }}
 
   msrv:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.GATE_RUNNER }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -40,7 +40,7 @@ jobs:
         run: cargo check
 
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.GATE_RUNNER }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
