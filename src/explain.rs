@@ -197,12 +197,17 @@ fn annotate_code_section(c: &mut Cursor, payload: &[u8], base: usize) {
             break;
         }
         let body_start = pc.pos;
+        let body_end = body_start + body_size as usize;
         let (local_count, lc) = decode_leb128_u32(pc.bytes, pc.pos).unwrap_or((0, 1));
         pc.emit(
             lc,
             format!("body[{}] local declaration count: {}", i, local_count),
         );
         for l in 0..local_count {
+            if pc.pos >= body_end {
+                pc.emit(0, format!("body[{}] locals overrun body", i));
+                break;
+            }
             if pc.remaining() < 1 {
                 break;
             }
@@ -217,7 +222,7 @@ fn annotate_code_section(c: &mut Cursor, payload: &[u8], base: usize) {
                 format!("body[{}] local[{}] type: {}", i, l, val_type_name(t)),
             );
         }
-        let expr_len = body_size as usize - (pc.pos - body_start);
+        let expr_len = body_end.saturating_sub(pc.pos);
         if expr_len > 0 && pc.remaining() >= expr_len {
             pc.emit(expr_len, format!("body[{}] expr ({} bytes)", i, expr_len));
         }
@@ -440,6 +445,15 @@ mod tests {
         let bytes = make_wasm(&[(10, code_payload)]);
         let a = annotations(&explain_bytes(&bytes)).join("\n");
         assert!(a.contains("body[0] truncated"));
+    }
+
+    #[test]
+    fn code_section_locals_overrun_body_does_not_panic() {
+        // body_size 1 だが local 宣言が 3 バイト消費する(body を超える)
+        let code_payload = &[0x01, 0x01, 0x01, 0x02, 0x7F];
+        let bytes = make_wasm(&[(10, code_payload)]);
+        let a = annotations(&explain_bytes(&bytes)).join("\n");
+        assert!(a.contains("body[0] locals overrun body"));
     }
 
     #[test]
