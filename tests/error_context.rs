@@ -97,6 +97,33 @@ fn valid_module_returns_ok() {
 }
 
 #[test]
+fn context_and_plain_parse_agree_on_a_multi_section_module() {
+    use wasm_runtime::module::parse_module;
+    // type, import, function, table, memory, global, export, start, datacount,
+    // code, data, plus a custom section: both entry points share one decoder.
+    let bytes = make_wasm(&[
+        (1, &[0x01, 0x60, 0x00, 0x00]),
+        (2, &[0x01, 0x01, b'm', 0x01, b'f', 0x00, 0x00]),
+        (3, &[0x01, 0x00]),
+        (4, &[0x01, 0x70, 0x00, 0x01]),
+        (5, &[0x01, 0x00, 0x01]),
+        (6, &[0x01, 0x7F, 0x00, 0x41, 0x00, 0x0B]),
+        (7, &[0x01, 0x01, b'f', 0x00, 0x00]),
+        (8, &[0x00]),
+        (12, &[0x01]),
+        (10, &[0x01, 0x02, 0x00, 0x0B]),
+        (11, &[0x01, 0x00, 0x41, 0x00, 0x0B, 0x01, 0xAA]),
+        (0, &[0x01, b'x', 0x01]),
+    ]);
+    let plain = parse_module(&bytes).expect("plain parse");
+    let ctx = parse_module_with_context(&bytes).expect("context parse");
+    assert_eq!(plain, ctx);
+    // The module really exercised the arms (not an empty comparison).
+    assert!(!ctx.types.is_empty() && !ctx.imports.is_empty() && !ctx.code.is_empty());
+    assert!(ctx.start.is_some() && ctx.data_count.is_some() && !ctx.customs.is_empty());
+}
+
+#[test]
 fn invalid_magic_includes_offset_zero() {
     let bad = [0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00];
     let err = parse_module_with_context(&bad).unwrap_err();

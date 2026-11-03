@@ -9,8 +9,9 @@ use crate::sections::{
     decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
     decode_element_section, decode_export_section, decode_function_section, decode_global_section,
     decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
-    decode_type_section, CustomSection, DataSegment, ElementInit, ElementMode, ElementSegment,
-    Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits, Table,
+    decode_type_section, scan_expr, CustomSection, DataSegment, ElementInit, ElementMode,
+    ElementSegment, Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits,
+    Table,
 };
 use std::fmt;
 
@@ -77,25 +78,31 @@ pub fn section_name(id: u8) -> &'static str {
     }
 }
 
-fn apply_section(
+/// Decodes one section into `module`. The only place that maps a section id to
+/// its decoder and `Module` field. `map_err` converts a decoder's [`ParseError`]
+/// into the caller's error type (identity, or wrapping with offset/section id).
+fn apply_section<E>(
     module: &mut Module,
     hdr: &SectionHeader,
     payload: &[u8],
-) -> Result<(), ParseError> {
+    map_err: impl Fn(ParseError) -> E,
+) -> Result<(), E> {
     match hdr.id {
-        0 => module.customs.push(decode_custom_section(payload)?),
-        1 => module.types = decode_type_section(payload)?,
-        2 => module.imports = decode_import_section(payload)?,
-        3 => module.functions = decode_function_section(payload)?,
-        4 => module.tables = decode_table_section(payload)?,
-        5 => module.memories = decode_memory_section(payload)?,
-        6 => module.globals = decode_global_section(payload)?,
-        7 => module.exports = decode_export_section(payload)?,
-        8 => module.start = Some(decode_start_section(payload)?),
-        9 => module.elements = decode_element_section(payload)?,
-        10 => module.code = decode_code_section(payload)?,
-        11 => module.data = decode_data_section(payload)?,
-        12 => module.data_count = Some(decode_datacount_section(payload)?),
+        0 => module
+            .customs
+            .push(decode_custom_section(payload).map_err(map_err)?),
+        1 => module.types = decode_type_section(payload).map_err(map_err)?,
+        2 => module.imports = decode_import_section(payload).map_err(map_err)?,
+        3 => module.functions = decode_function_section(payload).map_err(map_err)?,
+        4 => module.tables = decode_table_section(payload).map_err(map_err)?,
+        5 => module.memories = decode_memory_section(payload).map_err(map_err)?,
+        6 => module.globals = decode_global_section(payload).map_err(map_err)?,
+        7 => module.exports = decode_export_section(payload).map_err(map_err)?,
+        8 => module.start = Some(decode_start_section(payload).map_err(map_err)?),
+        9 => module.elements = decode_element_section(payload).map_err(map_err)?,
+        10 => module.code = decode_code_section(payload).map_err(map_err)?,
+        11 => module.data = decode_data_section(payload).map_err(map_err)?,
+        12 => module.data_count = Some(decode_datacount_section(payload).map_err(map_err)?),
         _ => {} // unknown section id: skipped
     }
     Ok(())
@@ -125,7 +132,7 @@ pub fn parse_module_with_events(
             size: hdr.size,
             offset: hdr.offset,
         });
-        apply_section(&mut module, &hdr, payload)?;
+        apply_section(&mut module, &hdr, payload, |e| e)?;
     }
 
     Ok(module)
@@ -143,29 +150,11 @@ pub fn parse_module_with_context(bytes: &[u8]) -> Result<Module, ParseErrorConte
     for result in section_iter(bytes) {
         let hdr = result.map_err(ParseErrorContext::new)?;
         let payload = &bytes[hdr.offset..hdr.offset + hdr.size as usize];
-        let ctx = |e| {
+        apply_section(&mut module, &hdr, payload, |e| {
             ParseErrorContext::new(e)
                 .with_offset(hdr.offset)
                 .with_section(hdr.id)
-        };
-        match hdr.id {
-            0 => module
-                .customs
-                .push(decode_custom_section(payload).map_err(ctx)?),
-            1 => module.types = decode_type_section(payload).map_err(ctx)?,
-            2 => module.imports = decode_import_section(payload).map_err(ctx)?,
-            3 => module.functions = decode_function_section(payload).map_err(ctx)?,
-            4 => module.tables = decode_table_section(payload).map_err(ctx)?,
-            5 => module.memories = decode_memory_section(payload).map_err(ctx)?,
-            6 => module.globals = decode_global_section(payload).map_err(ctx)?,
-            7 => module.exports = decode_export_section(payload).map_err(ctx)?,
-            8 => module.start = Some(decode_start_section(payload).map_err(ctx)?),
-            9 => module.elements = decode_element_section(payload).map_err(ctx)?,
-            10 => module.code = decode_code_section(payload).map_err(ctx)?,
-            11 => module.data = decode_data_section(payload).map_err(ctx)?,
-            12 => module.data_count = Some(decode_datacount_section(payload).map_err(ctx)?),
-            _ => {}
-        }
+        })?;
     }
 
     Ok(module)
@@ -200,6 +189,8 @@ pub enum ValidationError {
     StartFuncIndexOutOfRange { index: u32, func_space: usize },
     /// The datacount section disagrees with the actual data segment count.
     DataCountMismatch { declared: u32, actual: usize },
+    /// A function uses `memory.init` or `data.drop`, which need a datacount section.
+    DataCountRequired,
 }
 
 impl fmt::Display for ValidationError {
@@ -244,6 +235,10 @@ impl fmt::Display for ValidationError {
                 f,
                 "datacount section declares {} segments but data section has {}",
                 declared, actual
+            ),
+            ValidationError::DataCountRequired => write!(
+                f,
+                "memory.init or data.drop is used but there is no datacount section"
             ),
         }
     }
@@ -364,6 +359,17 @@ impl Module {
                     actual: self.data.len(),
                 });
             }
+        }
+
+        // 7. memory.init and data.drop refer to data segments by index, which the
+        //    binary format only allows when a datacount section is present.
+        if self.data_count.is_none()
+            && self
+                .code
+                .iter()
+                .any(|b| matches!(scan_expr(&b.expr), Ok(info) if info.uses_data_index))
+        {
+            return Err(ValidationError::DataCountRequired);
         }
 
         Ok(())
@@ -684,6 +690,42 @@ mod tests {
                 actual: 1,
             })
         );
+    }
+
+    fn module_with_body(expr: Vec<u8>, data_count: Option<u32>) -> Module {
+        Module {
+            types: vec![func_type()],
+            functions: vec![0],
+            code: vec![FuncBody {
+                locals: vec![],
+                expr,
+            }],
+            data_count,
+            ..Module::default()
+        }
+    }
+
+    #[test]
+    fn data_drop_without_datacount_is_rejected() {
+        // data.drop 0; end (spec binary.57)
+        let module = module_with_body(vec![0xFC, 0x09, 0x00, 0x0B], None);
+        assert_eq!(module.validate(), Err(ValidationError::DataCountRequired));
+    }
+
+    #[test]
+    fn memory_init_without_datacount_is_rejected() {
+        // memory.init data 0 mem 0; end (spec binary.56)
+        let module = module_with_body(vec![0xFC, 0x08, 0x00, 0x00, 0x0B], None);
+        assert_eq!(module.validate(), Err(ValidationError::DataCountRequired));
+    }
+
+    #[test]
+    fn data_drop_with_datacount_or_other_bulk_ops_without_it_is_valid() {
+        let with = module_with_body(vec![0xFC, 0x09, 0x00, 0x0B], Some(0));
+        assert_eq!(with.validate(), Ok(()));
+        // memory.fill needs no data index, so no datacount is required
+        let fill = module_with_body(vec![0xFC, 0x0B, 0x00, 0x0B], None);
+        assert_eq!(fill.validate(), Ok(()));
     }
 
     #[test]

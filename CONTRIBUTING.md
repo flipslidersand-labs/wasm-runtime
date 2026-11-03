@@ -14,6 +14,13 @@ Thank you for your interest in contributing!
 
 See [README.md](README.md) for environment setup and build instructions.
 
+Enable the pre-commit hooks (`cargo fmt` / `cargo clippy`) once per clone:
+
+```sh
+pip install pre-commit   # or: pipx install pre-commit
+pre-commit install
+```
+
 ## Pull Request Guidelines
 
 - Keep PRs focused — one change per PR

@@ -14,6 +14,7 @@ pub use custom::{decode_custom_section, decode_name_section, CustomSection, Name
 pub use data::{decode_data_section, DataMode, DataSegment};
 pub use element::{decode_element_section, ElementInit, ElementMode, ElementSegment};
 pub use export::{decode_export_section, Export, ExportKind};
+pub(crate) use func::scan_expr;
 pub use func::{decode_code_section, FuncBody, LocalDecl};
 pub use global::{decode_global_section, parse_const_expr, ConstExpr, Global, GlobalType};
 pub use import::{decode_import_section, Import, ImportDesc};
@@ -33,6 +34,16 @@ pub use types::{
 /// `count` can never legitimately exceed `payload_len`.
 fn capped_capacity(count: u32, payload_len: usize) -> usize {
     (count as usize).min(payload_len)
+}
+
+/// Rejects a section whose declared size is larger than what its decoded
+/// content used (trailing bytes after the last entry).
+fn ensure_consumed(payload: &[u8], pos: usize) -> Result<(), ParseError> {
+    if pos == payload.len() {
+        Ok(())
+    } else {
+        Err(ParseError::SizeMismatch)
+    }
 }
 
 fn read_name(payload: &[u8], pos: &mut usize) -> Result<String, ParseError> {
