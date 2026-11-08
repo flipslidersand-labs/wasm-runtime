@@ -70,7 +70,8 @@ impl std::fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 /// [`ParseError`] enriched with the byte offset and section id where the
-/// error occurred. Returned by [`crate::module::parse_module_with_context`].
+/// error occurred. Returned by [`crate::module::parse_module_with_context`]
+/// and [`crate::module::parse_module_with_options`].
 #[derive(Debug)]
 pub struct ParseErrorContext {
     /// The underlying parse error.
