@@ -52,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** init expressions are unified to the typed `ConstExpr`: `Global.init_expr: Vec<u8>` becomes `Global.init`, and `offset_expr` of active data/element segments becomes `offset` (#70, PR #96)
 - Names printed by `wasm-dump` and `Display` impls now escape control characters, `\`, `"`, C1 controls, and bidi/line-separator characters as `\u{..}` (PR #181, #188, #197)
 - `wasm-dump` exits 1 and reports `(decode error: ..)` when a section fails to decode; `--explain` keeps exit 0 (PR #175)
+- **Behavior change:** `Import` Display now quotes both parts (`"env"::"log"  Func(2)`, was `env::log  Func(2)`), so names containing `::` are unambiguous (#190)
+- **Behavior change:** `display_name` and WAT string output now escape U+200B, U+FEFF, U+2060..U+2064 and U+00AD as `\u{..}`; U+200C/U+200D are kept as-is (ZWNJ/ZWJ are legitimate in scripts and emoji) (#190)
 
 ### Fixed
 - `parse_header`: replaced `try_into().unwrap()` with direct byte indexing to eliminate hidden panics (#65, PR #76)
