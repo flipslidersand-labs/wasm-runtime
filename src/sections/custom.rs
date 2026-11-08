@@ -66,9 +66,12 @@ impl fmt::Display for NameSection {
 ///
 /// The payload is a sequence of subsections, each `id:byte size:u32 payload[size]`.
 /// Unknown subsection ids are skipped by advancing `size` bytes.
+/// Trailing bytes inside a subsection and a repeated subsection id are rejected
+/// (ids out of ascending order are tolerated).
 pub fn decode_name_section(bytes: &[u8]) -> Result<NameSection, ParseError> {
     let mut pos = 0;
     let mut ns = NameSection::default();
+    let mut seen = [false; 256];
 
     while pos < bytes.len() {
         let id = bytes[pos];
@@ -84,6 +87,11 @@ pub fn decode_name_section(bytes: &[u8]) -> Result<NameSection, ParseError> {
             return Err(ParseError::UnexpectedEof);
         }
 
+        // Reuses SectionOutOfOrder(id): its message already reads "duplicated or out of order".
+        if std::mem::replace(&mut seen[id as usize], true) {
+            return Err(ParseError::SectionOutOfOrder(id));
+        }
+
         let sub = &bytes[pos..sub_end];
 
         match id {
@@ -91,6 +99,9 @@ pub fn decode_name_section(bytes: &[u8]) -> Result<NameSection, ParseError> {
             0 => {
                 let mut p = 0;
                 ns.module = Some(super::read_name(sub, &mut p)?);
+                if p != sub.len() {
+                    return Err(ParseError::SizeMismatch);
+                }
             }
             // subsection 1: function names — vec(idx:u32 name:namestring)
             1 => {
@@ -102,6 +113,9 @@ pub fn decode_name_section(bytes: &[u8]) -> Result<NameSection, ParseError> {
                     p += n;
                     let name = super::read_name(sub, &mut p)?;
                     ns.functions.push((idx, name));
+                }
+                if p != sub.len() {
+                    return Err(ParseError::SizeMismatch);
                 }
             }
             // all other subsection ids (e.g. 2 = local names): skip
