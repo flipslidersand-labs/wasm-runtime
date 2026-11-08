@@ -309,6 +309,60 @@ fn invalid_magic_exits_nonzero() {
         .stderr(predicate::str::contains("error:"));
 }
 
+// ── デコードエラー (#168) ─────────────────────────────────
+
+/// pid 付きの tmp ファイル。Drop で削除する。
+struct TmpWasm(std::path::PathBuf);
+
+impl Drop for TmpWasm {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// type セクションの functype マーカーが 0xFF の壊れたモジュールを tmp に書く。
+fn write_bad_type_section(name: &str) -> TmpWasm {
+    let path = std::env::temp_dir().join(format!("{}_{}.wasm", name, std::process::id()));
+    std::fs::write(&path, b"\x00\x61\x73\x6D\x01\x00\x00\x00\x01\x02\x01\xFF").unwrap();
+    TmpWasm(path)
+}
+
+#[test]
+fn default_output_decode_error_exits_one() {
+    let tmp = write_bad_type_section("bad_type_default_168");
+    wasm_dump()
+        .arg(tmp.0.to_str().unwrap())
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("type"))
+        .stdout(predicate::str::contains("decode error"));
+}
+
+#[test]
+fn verbose_decode_error_exits_one() {
+    let tmp = write_bad_type_section("bad_type_verbose_168");
+    wasm_dump()
+        .arg("--verbose")
+        .arg(tmp.0.to_str().unwrap())
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("expected 0x60 functype marker"))
+        .stderr(predicate::str::contains("1 section(s) failed to decode"));
+}
+
+#[test]
+fn explain_decode_error_keeps_exit_zero() {
+    let tmp = write_bad_type_section("bad_type_explain_168");
+    wasm_dump()
+        .arg("--explain")
+        .arg(tmp.0.to_str().unwrap())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("decode error"));
+}
+
 // ── --diff ───────────────────────────────────────────────
 
 #[test]
