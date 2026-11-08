@@ -15,7 +15,7 @@ impl fmt::Display for CustomSection {
         write!(
             f,
             "name=\"{}\" payload={} bytes",
-            self.name,
+            super::display_name(&self.name),
             self.bytes.len()
         )
     }
@@ -50,12 +50,12 @@ impl fmt::Display for NameSection {
             return writeln!(f, "  (empty)");
         }
         if let Some(m) = &self.module {
-            writeln!(f, "  module: \"{}\"", m)?;
+            writeln!(f, "  module: \"{}\"", super::display_name(m))?;
         }
         if !self.functions.is_empty() {
             writeln!(f, "  function names:")?;
             for (idx, name) in &self.functions {
-                writeln!(f, "    [{}] \"{}\"", idx, name)?;
+                writeln!(f, "    [{}] \"{}\"", idx, super::display_name(name))?;
             }
         }
         Ok(())

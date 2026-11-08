@@ -10,7 +10,7 @@ use wasm_runtime::{
         decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
         decode_element_section, decode_export_section, decode_function_section,
         decode_global_section, decode_import_section, decode_memory_section, decode_name_section,
-        decode_start_section, decode_table_section, decode_type_section,
+        decode_start_section, decode_table_section, decode_type_section, display_name,
     },
     stats::ModuleStats,
     wat::module_to_wat,
@@ -194,7 +194,7 @@ fn main() {
         match hdr.id {
             0 => match decode_custom_section(payload) {
                 Ok(c) => {
-                    print!("  (name \"{}\")", c.name);
+                    print!("  (name \"{}\")", display_name(&c.name));
                     if c.name == "name" {
                         match decode_name_section(&c.bytes) {
                             Ok(ns) => {

@@ -559,3 +559,117 @@ fn diff_max_size_non_regular_file_is_bounded() {
         .code(1)
         .stderr(predicate::str::contains("exceeds the size limit"));
 }
+
+// ── 制御文字を含む名前のエスケープ (#176) ────────────────
+
+fn section(id: u8, payload: &[u8]) -> Vec<u8> {
+    assert!(payload.len() < 128);
+    let mut v = vec![id, payload.len() as u8];
+    v.extend_from_slice(payload);
+    v
+}
+
+fn name_bytes(s: &str) -> Vec<u8> {
+    let mut v = vec![s.len() as u8];
+    v.extend_from_slice(s.as_bytes());
+    v
+}
+
+/// ESC / 改行を名前に含む wasm を組み立てる。
+fn hostile_names_wasm() -> Vec<u8> {
+    let mut m = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+    // import: "mod\x1b[31m" :: "imp\x1b]0;pwn\x07" func type 0
+    let mut imp = vec![1];
+    imp.extend(name_bytes("mod\x1b[31m"));
+    imp.extend(name_bytes("imp\x1b]0;pwn\x07"));
+    imp.extend([0x00, 0x00]);
+    m.extend(section(2, &imp));
+    // export: "exp\x1b[2J\nfake" func 0
+    let mut exp = vec![1];
+    exp.extend(name_bytes("exp\x1b[2J\nfake"));
+    exp.extend([0x00, 0x00]);
+    m.extend(section(7, &exp));
+    // custom: "cus\x1b[1mtom"
+    let mut cus = name_bytes("cus\x1b[1mtom");
+    cus.extend([1, 2, 3]);
+    m.extend(section(0, &cus));
+    // name section: module name + function name with ESC
+    let mut ns = name_bytes("name");
+    let mut sub0 = name_bytes("modname\x1b[0m");
+    ns.push(0);
+    ns.push(sub0.len() as u8);
+    ns.append(&mut sub0);
+    let mut sub1 = vec![1, 0];
+    sub1.extend(name_bytes("fn\x1b[7mname"));
+    ns.push(1);
+    ns.push(sub1.len() as u8);
+    ns.extend(sub1);
+    m.extend(section(0, &ns));
+    m
+}
+
+#[test]
+fn control_chars_in_names_are_escaped_in_output() {
+    let path = std::env::temp_dir().join(format!("wasm-dump-176-{}.wasm", std::process::id()));
+    std::fs::write(&path, hostile_names_wasm()).unwrap();
+    let mut outputs = Vec::new();
+    for flags in [
+        vec![],
+        vec!["--verbose"],
+        vec!["--explain"],
+        vec!["--stats"],
+        vec!["--wat"],
+    ] {
+        let out = wasm_dump().args(&flags).arg(&path).output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "exit code for {:?}", flags);
+        outputs.push((flags, out));
+    }
+    std::fs::remove_file(&path).ok();
+    for (flags, out) in &outputs {
+        for b in [0x1bu8, 0x07] {
+            assert!(
+                !out.stdout.contains(&b),
+                "raw byte {:#04x} in stdout for {:?}:\n{}",
+                b,
+                flags,
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+    }
+    let verbose = String::from_utf8_lossy(&outputs[1].1.stdout).to_string();
+    for want in [
+        "cus\\u{1b}[1mtom",
+        "imp\\u{1b}]0;pwn\\u{7}",
+        "exp\\u{1b}[2J\\u{a}fake",
+        "modname\\u{1b}[0m",
+        "fn\\u{1b}[7mname",
+    ] {
+        assert!(verbose.contains(want), "missing {want:?} in:\n{verbose}");
+    }
+}
+
+#[test]
+fn control_chars_in_validation_error_are_escaped_on_stderr() {
+    let mut m = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+    let mut exp = vec![1];
+    exp.extend(name_bytes("bad\x1b[2J\x07\nfake"));
+    exp.extend([0x00, 0x05]); // func index 5: out of range
+    m.extend(section(7, &exp));
+    let path = std::env::temp_dir().join(format!("wasm-dump-176v-{}.wasm", std::process::id()));
+    std::fs::write(&path, m).unwrap();
+    let out = wasm_dump().arg("--validate").arg(&path).output().unwrap();
+    std::fs::remove_file(&path).ok();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(
+        stderr.contains("out of range"),
+        "unexpected stderr:\n{stderr}"
+    );
+    for b in [0x1bu8, 0x07] {
+        assert!(
+            !out.stderr.contains(&b),
+            "raw {b:#04x} in stderr:\n{stderr}"
+        );
+        assert!(!out.stdout.contains(&b), "raw {b:#04x} in stdout");
+    }
+    assert!(stderr.contains("bad\\u{1b}[2J\\u{7}\\u{a}fake"), "{stderr}");
+}

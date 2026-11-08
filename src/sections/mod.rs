@@ -24,6 +24,21 @@ pub use types::{
     FuncType, Limits, RefType, Table, ValType,
 };
 
+/// Escapes control characters (`char::is_control`) as `\u{..}` so that an
+/// untrusted name is safe to print to a terminal. Not for WAT output (see
+/// `wat::wat_string`).
+pub fn display_name(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            out.push_str(&format!("\\u{{{:x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 // ── Shared internal helpers ───────────────────────────────────────────────────
 // These are accessible to all submodules via `super::xxx`.
 
