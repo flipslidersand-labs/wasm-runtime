@@ -621,7 +621,7 @@ impl Module {
         }
 
         // 9. a global's init expression must have the global's declared type.
-        //    (Element expr items and data/element offsets are not typed here.)
+        //    (Element expr items are not typed here.)
         let global_types: Vec<ValType> = self
             .imports
             .iter()
@@ -631,22 +631,42 @@ impl Module {
             })
             .chain(self.globals.iter().map(|g| g.global_type.valtype))
             .collect();
+        let type_of = |expr: &ConstExpr| match expr {
+            ConstExpr::I32(_) => Some(ValType::I32),
+            ConstExpr::I64(_) => Some(ValType::I64),
+            ConstExpr::F32(_) => Some(ValType::F32),
+            ConstExpr::F64(_) => Some(ValType::F64),
+            // Out-of-range indices are reported by step 8; skip here.
+            ConstExpr::GlobalGet(i) => global_types.get(*i as usize).copied(),
+        };
         for g in &self.globals {
-            let found = match &g.init {
-                ConstExpr::I32(_) => ValType::I32,
-                ConstExpr::I64(_) => ValType::I64,
-                ConstExpr::F32(_) => ValType::F32,
-                ConstExpr::F64(_) => ValType::F64,
-                ConstExpr::GlobalGet(i) => match global_types.get(*i as usize) {
-                    Some(t) => *t,
-                    None => continue,
-                },
-            };
-            if found != g.global_type.valtype {
-                return Err(ValidationError::InitExprTypeMismatch {
-                    expected: g.global_type.valtype,
-                    found,
-                });
+            if let Some(found) = type_of(&g.init) {
+                if found != g.global_type.valtype {
+                    return Err(ValidationError::InitExprTypeMismatch {
+                        expected: g.global_type.valtype,
+                        found,
+                    });
+                }
+            }
+        }
+
+        // 10. active data / element offsets must be i32.
+        let element_offsets = self.elements.iter().filter_map(|e| match &e.mode {
+            ElementMode::Active { offset, .. } => Some(offset),
+            _ => None,
+        });
+        let data_offsets = self.data.iter().filter_map(|d| match &d.mode {
+            DataMode::Active { offset, .. } => Some(offset),
+            _ => None,
+        });
+        for offset in element_offsets.chain(data_offsets) {
+            if let Some(found) = type_of(offset) {
+                if found != ValType::I32 {
+                    return Err(ValidationError::InitExprTypeMismatch {
+                        expected: ValType::I32,
+                        found,
+                    });
+                }
             }
         }
 
