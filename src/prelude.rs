@@ -1,6 +1,6 @@
 pub use crate::module::{
-    parse_module, parse_module_with_context, parse_module_with_events, Module, SectionEvent,
-    ValidationError,
+    parse_module, parse_module_with_context, parse_module_with_events, parse_module_with_options,
+    Module, ParseOptions, SectionEvent, ValidationError,
 };
 pub use crate::parser::{parse_header, section_iter, ParseError, ParseErrorContext, SectionHeader};
 pub use crate::sections::{

@@ -108,23 +108,53 @@ fn apply_section<E>(
     Ok(())
 }
 
-/// Decodes the module header and every known section into a [`Module`].
-///
-/// `on_section` is called once per section, in order, before the section is
-/// decoded.  The callback receives a [`SectionEvent`] describing the section's
-/// id, name, payload size, and payload offset.  Use `|_| {}` to ignore events.
-pub fn parse_module_with_events(
+/// How [`parse_impl`] turns a [`ParseError`] into the caller's error type at
+/// each of its three failure sites.
+trait MapParseError: Sized {
+    fn header(e: ParseError) -> Self;
+    fn iter(e: ParseError) -> Self;
+    fn section(e: ParseError, hdr: &SectionHeader) -> Self;
+}
+
+impl MapParseError for ParseError {
+    fn header(e: ParseError) -> Self {
+        e
+    }
+    fn iter(e: ParseError) -> Self {
+        e
+    }
+    fn section(e: ParseError, _hdr: &SectionHeader) -> Self {
+        e
+    }
+}
+
+impl MapParseError for ParseErrorContext {
+    fn header(e: ParseError) -> Self {
+        ParseErrorContext::new(e).with_offset(0)
+    }
+    fn iter(e: ParseError) -> Self {
+        ParseErrorContext::new(e)
+    }
+    fn section(e: ParseError, hdr: &SectionHeader) -> Self {
+        ParseErrorContext::new(e)
+            .with_offset(hdr.offset)
+            .with_section(hdr.id)
+    }
+}
+
+/// The single parse loop behind every public `parse_module*` function.
+fn parse_impl<E: MapParseError>(
     bytes: &[u8],
     mut on_section: impl FnMut(SectionEvent),
-) -> Result<Module, ParseError> {
-    let version = parse_header(bytes)?;
+) -> Result<Module, E> {
+    let version = parse_header(bytes).map_err(E::header)?;
     let mut module = Module {
         version,
         ..Module::default()
     };
 
     for result in section_iter(bytes) {
-        let hdr = result?;
+        let hdr = result.map_err(E::iter)?;
         let payload = &bytes[hdr.offset..hdr.offset + hdr.size as usize];
         on_section(SectionEvent {
             id: hdr.id,
@@ -132,10 +162,75 @@ pub fn parse_module_with_events(
             size: hdr.size,
             offset: hdr.offset,
         });
-        apply_section(&mut module, &hdr, payload, |e| e)?;
+        apply_section(&mut module, &hdr, payload, |e| E::section(e, &hdr))?;
     }
 
     Ok(module)
+}
+
+fn ignore_section(_: SectionEvent) {}
+
+/// Options for [`parse_module_with_options`].
+///
+/// Build with [`ParseOptions::new`] (or `Default`) and chain setters. Fields
+/// are private so new options can be added without breaking callers.
+#[non_exhaustive]
+pub struct ParseOptions<F = fn(SectionEvent)> {
+    on_section: F,
+}
+
+impl ParseOptions {
+    /// Options with no section callback.
+    pub fn new() -> Self {
+        ParseOptions {
+            on_section: ignore_section,
+        }
+    }
+}
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<F> ParseOptions<F> {
+    /// Sets the callback invoked once per section, in order, before the
+    /// section is decoded (same timing as [`parse_module_with_events`]).
+    pub fn on_section<G: FnMut(SectionEvent)>(self, on_section: G) -> ParseOptions<G> {
+        ParseOptions { on_section }
+    }
+}
+
+impl<F> fmt::Debug for ParseOptions<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ParseOptions").finish_non_exhaustive()
+    }
+}
+
+/// Decodes a module with the given [`ParseOptions`], returning
+/// [`ParseErrorContext`] on failure.
+///
+/// Combines [`parse_module_with_events`] (section callback) and
+/// [`parse_module_with_context`] (offset / section id on errors). The plain
+/// [`ParseError`] is available as [`ParseErrorContext::error`].
+pub fn parse_module_with_options<F: FnMut(SectionEvent)>(
+    bytes: &[u8],
+    options: ParseOptions<F>,
+) -> Result<Module, ParseErrorContext> {
+    parse_impl(bytes, options.on_section)
+}
+
+/// Decodes the module header and every known section into a [`Module`].
+///
+/// `on_section` is called once per section, in order, before the section is
+/// decoded.  The callback receives a [`SectionEvent`] describing the section's
+/// id, name, payload size, and payload offset.  Use `|_| {}` to ignore events.
+pub fn parse_module_with_events(
+    bytes: &[u8],
+    on_section: impl FnMut(SectionEvent),
+) -> Result<Module, ParseError> {
+    parse_impl(bytes, on_section)
 }
 
 /// Like [`parse_module`] but returns [`ParseErrorContext`] on failure.
@@ -145,23 +240,7 @@ pub fn parse_module_with_events(
 /// section iterator itself (malformed section headers) are wrapped without an
 /// offset or section id.
 pub fn parse_module_with_context(bytes: &[u8]) -> Result<Module, ParseErrorContext> {
-    let version = parse_header(bytes).map_err(|e| ParseErrorContext::new(e).with_offset(0))?;
-    let mut module = Module {
-        version,
-        ..Module::default()
-    };
-
-    for result in section_iter(bytes) {
-        let hdr = result.map_err(ParseErrorContext::new)?;
-        let payload = &bytes[hdr.offset..hdr.offset + hdr.size as usize];
-        apply_section(&mut module, &hdr, payload, |e| {
-            ParseErrorContext::new(e)
-                .with_offset(hdr.offset)
-                .with_section(hdr.id)
-        })?;
-    }
-
-    Ok(module)
+    parse_impl(bytes, ignore_section)
 }
 
 /// Decodes the module header and every known section into a [`Module`].
