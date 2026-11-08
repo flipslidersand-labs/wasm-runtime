@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Behavior change:** `Import` Display now quotes both parts (`"env"::"log"  Func(2)`, was `env::log  Func(2)`), so names containing `::` are unambiguous (#190)
+- **Behavior change:** `display_name` and WAT string output now escape U+200B, U+FEFF, U+2060..U+2064 and U+00AD as `\u{..}`; U+200C/U+200D are kept as-is (ZWNJ/ZWJ are legitimate in scripts and emoji) (#190)
+
 ### Added
 - `ValidationError::InitExprTypeMismatch`: `Module::validate()` rejects a global whose init expression type differs from its declared type (#221, PR #226)
 - `ValidationError::GlobalIndexOutOfRange`: `Module::validate()` rejects `global.get` in a global init or active element/data offset whose index is beyond the global space (imports + defined) (#221, PR #225)
