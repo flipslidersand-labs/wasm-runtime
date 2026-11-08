@@ -56,13 +56,13 @@ pub fn diff_modules(a: &[u8], b: &[u8]) -> Result<Vec<SectionDiff>, ParseError> 
     let map_b = collect_sections(b)?;
 
     // Gather all distinct section ids from both sides, in id order.
-    let mut ids: Vec<u8> = {
+    let ids: Vec<u8> = {
         let mut set: std::collections::BTreeSet<u8> = Default::default();
         set.extend(map_a.keys());
         set.extend(map_b.keys());
+        // BTreeSet iterates in ascending order, so no extra sort is needed.
         set.into_iter().collect()
     };
-    ids.sort_unstable();
 
     let mut result = Vec::new();
     for id in ids {
