@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::process;
 use std::time::Instant;
 use wasm_runtime::{
@@ -9,7 +10,7 @@ use wasm_runtime::{
         decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
         decode_element_section, decode_export_section, decode_function_section,
         decode_global_section, decode_import_section, decode_memory_section, decode_name_section,
-        decode_start_section, decode_table_section, decode_type_section,
+        decode_start_section, decode_table_section, decode_type_section, display_name,
     },
     stats::ModuleStats,
     wat::module_to_wat,
@@ -22,6 +23,45 @@ struct Flags {
     wat: bool,
     timing: bool,
     explain: bool,
+    max_size: u64,
+}
+
+/// Default input size limit: 256 MiB.
+const DEFAULT_MAX_SIZE: u64 = 256 * 1024 * 1024;
+
+fn parse_max_size(v: Option<&String>) -> Result<u64, String> {
+    match v.and_then(|s| s.parse::<u64>().ok()) {
+        None => Err("--max-size requires a byte count (positive integer)".to_string()),
+        Some(0) => Err("--max-size must be at least 1".to_string()),
+        Some(n) => Ok(n),
+    }
+}
+
+fn print_usage() {
+    eprintln!(
+        "Usage: wasm-dump [--verbose|-v] [--validate] [--stats] [--timing] [--wat] [--explain] [--max-size <bytes>] <file.wasm>"
+    );
+    eprintln!("       wasm-dump --diff [--max-size <bytes>] <a.wasm> <b.wasm>");
+}
+
+/// Read a file, refusing inputs larger than `max` bytes.
+/// Reads at most `max + 1` bytes so non-regular files (e.g. /dev/zero) are bounded too.
+fn read_limited(path: &str, max: u64) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("cannot read '{}': {}", path, e))?;
+    let too_big = || format!("input '{}' exceeds the size limit of {} bytes", path, max);
+    if let Ok(meta) = file.metadata() {
+        if meta.is_file() && meta.len() > max {
+            return Err(too_big());
+        }
+    }
+    let mut buf = Vec::new();
+    file.take(max.saturating_add(1))
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("cannot read '{}': {}", path, e))?;
+    if buf.len() as u64 > max {
+        return Err(too_big());
+    }
+    Ok(buf)
 }
 
 /// Parse CLI arguments into (Flags, path).
@@ -34,6 +74,7 @@ fn parse_flags(args: &[String]) -> Result<(Flags, String), String> {
         wat: false,
         timing: false,
         explain: false,
+        max_size: DEFAULT_MAX_SIZE,
     };
     let mut path: Option<String> = None;
 
@@ -46,6 +87,10 @@ fn parse_flags(args: &[String]) -> Result<(Flags, String), String> {
             "--wat" => flags.wat = true,
             "--timing" => flags.timing = true,
             "--explain" => flags.explain = true,
+            "--max-size" => {
+                i += 1;
+                flags.max_size = parse_max_size(args.get(i))?;
+            }
             s if s.starts_with('-') => {
                 return Err(format!("unknown flag: {}", s));
             }
@@ -70,13 +115,32 @@ fn main() {
 
     // --diff takes two file arguments; handle it before the standard flag dispatch.
     if args.get(1).map(|s| s.as_str()) == Some("--diff") {
-        match args.as_slice() {
-            [_, _, path_a, path_b] => {
-                run_diff(path_a, path_b);
+        let mut max_size = DEFAULT_MAX_SIZE;
+        let mut rest: Vec<&String> = Vec::new();
+        let mut j = 2;
+        while j < args.len() {
+            if args[j] == "--max-size" {
+                j += 1;
+                max_size = match parse_max_size(args.get(j)) {
+                    Ok(v) => v,
+                    Err(msg) => {
+                        eprintln!("error: {}", msg);
+                        print_usage();
+                        process::exit(1);
+                    }
+                };
+            } else {
+                rest.push(&args[j]);
+            }
+            j += 1;
+        }
+        match rest.as_slice() {
+            [path_a, path_b] => {
+                run_diff(path_a, path_b, max_size);
                 return;
             }
             _ => {
-                eprintln!("Usage: wasm-dump --diff <a.wasm> <b.wasm>");
+                eprintln!("Usage: wasm-dump --diff [--max-size <bytes>] <a.wasm> <b.wasm>");
                 process::exit(1);
             }
         }
@@ -86,18 +150,15 @@ fn main() {
         Ok(v) => v,
         Err(msg) => {
             eprintln!("error: {}", msg);
-            eprintln!(
-                "Usage: wasm-dump [--verbose|-v] [--validate] [--stats] [--timing] [--wat] [--explain] <file.wasm>"
-            );
-            eprintln!("       wasm-dump --diff <a.wasm> <b.wasm>");
+            print_usage();
             process::exit(1);
         }
     };
 
-    let bytes = match std::fs::read(&path) {
+    let bytes = match read_limited(&path, flags.max_size) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("error: cannot read '{}': {}", path, e);
+            eprintln!("error: {}", e);
             process::exit(1);
         }
     };
@@ -133,7 +194,7 @@ fn main() {
         match hdr.id {
             0 => match decode_custom_section(payload) {
                 Ok(c) => {
-                    print!("  (name \"{}\")", c.name);
+                    print!("  (name \"{}\")", display_name(&c.name));
                     if c.name == "name" {
                         match decode_name_section(&c.bytes) {
                             Ok(ns) => {
@@ -293,10 +354,10 @@ fn main() {
     }
 }
 
-fn run_diff(path_a: &str, path_b: &str) {
+fn run_diff(path_a: &str, path_b: &str, max_size: u64) {
     let read = |p: &str| {
-        std::fs::read(p).unwrap_or_else(|e| {
-            eprintln!("error: cannot read '{}': {}", p, e);
+        read_limited(p, max_size).unwrap_or_else(|e| {
+            eprintln!("error: {}", e);
             process::exit(1);
         })
     };

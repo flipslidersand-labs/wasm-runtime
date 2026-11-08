@@ -38,7 +38,13 @@ pub struct Import {
 
 impl fmt::Display for Import {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}::{}  {}", self.module, self.name, self.desc)
+        write!(
+            f,
+            "{}::{}  {}",
+            super::display_name(&self.module),
+            super::display_name(&self.name),
+            self.desc
+        )
     }
 }
 
