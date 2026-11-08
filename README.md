@@ -67,7 +67,8 @@ wasm-dump --stats path/to/file.wasm    # summary statistics / サマリー統計
 wasm-dump --wat path/to/file.wasm      # WAT text output / WAT テキスト出力
 wasm-dump --timing path/to/file.wasm   # parse time measurement / パース時間計測
 wasm-dump --explain path/to/file.wasm  # byte-level annotated explanation / バイト単位の注釈付き解説
-wasm-dump --diff a.wasm b.wasm         # structural diff between two modules / 2モジュール間の構造的差分
+wasm-dump --max-size 1048576 path/to/file.wasm # input size limit in bytes (default 268435456 = 256 MiB) / 入力サイズ上限(バイト)
+wasm-dump --diff [--max-size <bytes>] a.wasm b.wasm # structural diff between two modules / 2モジュール間の構造的差分
 ```
 
 ### Example output / 出力例
@@ -108,6 +109,18 @@ SPEC_TESTSUITE_DIR=/tmp/testsuite cargo test --test spec_conformance -- --nocapt
 
 The failure set is pinned in `tests/spec_expected_failures.txt`; the test fails when it changes (regression or an unrecorded improvement).
 失敗の集合は `tests/spec_expected_failures.txt` に固定し、変わるとテストが落ちる。
+
+## CI pin update / CI の reusable workflow の固定SHAを更新する
+
+`qa-workflows` has no tags, so dependabot cannot bump it; the SHA pins in `.github/workflows/ci.yml` are updated by hand.
+
+`qa-workflows` はタグが無く dependabot が更新できないため、`.github/workflows/ci.yml` の SHA 固定は手動で更新する。
+
+1. 現在の固定SHA: `grep -n 'qa-workflows' .github/workflows/ci.yml`
+2. 固定SHAが upstream main 上にあるか・遅れ: `gh api repos/flipslidersand-labs/qa-workflows/compare/<固定SHA>...main --jq '[.status,.ahead_by]'`
+   - `.status` が `identical`(最新)か `ahead`(main が先行、固定SHAは main の祖先)なら main 上。`diverged` / `behind` なら main 上にない。固定SHAが存在せず 404 になる場合も main 上にない扱い。
+   - `.ahead_by` は `ahead` のときだけ意味を持ち(main が固定SHAより何コミット先行か=遅れ。0 なら最新)、`diverged` では遅れの数として使えない。
+3. 更新する場合は main の HEAD SHA(`gh api repos/flipslidersand-labs/qa-workflows/commits/main --jq .sha`)を取り、ci.yml の2か所(`rust-test.yml` と `reviewdog-rust.yml`)を同じ値に揃え、行末コメントの日付も直して PR を出す。
 
 ## License
 
