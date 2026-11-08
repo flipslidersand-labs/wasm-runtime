@@ -11,7 +11,7 @@ use crate::sections::{
     decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
     decode_type_section, scan_expr, ConstExpr, CustomSection, DataMode, DataSegment, ElementInit,
     ElementMode, ElementSegment, Export, ExportKind, FuncBody, FuncType, Global, Import,
-    ImportDesc, Limits, Table,
+    ImportDesc, Limits, Table, ValType,
 };
 use std::fmt;
 
@@ -300,6 +300,8 @@ pub enum ValidationError {
     /// An init expression (global init, active segment offset) uses `global.get`
     /// with an index beyond the global space.
     GlobalIndexOutOfRange { index: u32, global_space: usize },
+    /// A global init expression has a type different from the global's declared type.
+    InitExprTypeMismatch { expected: ValType, found: ValType },
 }
 
 /// Maximum memory size in 64 KiB pages (4 GiB) for 32-bit memories.
@@ -392,6 +394,11 @@ impl fmt::Display for ValidationError {
                 f,
                 "init expression global index {} out of range (global space {})",
                 index, global_space
+            ),
+            ValidationError::InitExprTypeMismatch { expected, found } => write!(
+                f,
+                "init expression has type {} but {} is expected",
+                found, expected
             ),
         }
     }
@@ -610,6 +617,36 @@ impl Module {
                         global_space,
                     });
                 }
+            }
+        }
+
+        // 9. a global's init expression must have the global's declared type.
+        //    (Element expr items and data/element offsets are not typed here.)
+        let global_types: Vec<ValType> = self
+            .imports
+            .iter()
+            .filter_map(|i| match &i.desc {
+                ImportDesc::Global { valtype, .. } => Some(*valtype),
+                _ => None,
+            })
+            .chain(self.globals.iter().map(|g| g.global_type.valtype))
+            .collect();
+        for g in &self.globals {
+            let found = match &g.init {
+                ConstExpr::I32(_) => ValType::I32,
+                ConstExpr::I64(_) => ValType::I64,
+                ConstExpr::F32(_) => ValType::F32,
+                ConstExpr::F64(_) => ValType::F64,
+                ConstExpr::GlobalGet(i) => match global_types.get(*i as usize) {
+                    Some(t) => *t,
+                    None => continue,
+                },
+            };
+            if found != g.global_type.valtype {
+                return Err(ValidationError::InitExprTypeMismatch {
+                    expected: g.global_type.valtype,
+                    found,
+                });
             }
         }
 
@@ -1495,6 +1532,121 @@ mod tests {
         assert_eq!(
             e.to_string(),
             "init expression global index 4 out of range (global space 2)"
+        );
+    }
+
+    fn typed_global(valtype: ValType, init: ConstExpr) -> Global {
+        Global {
+            global_type: crate::sections::GlobalType {
+                valtype,
+                mutable: false,
+            },
+            init,
+        }
+    }
+
+    fn mismatch(expected: ValType, found: ValType) -> Result<(), ValidationError> {
+        Err(ValidationError::InitExprTypeMismatch { expected, found })
+    }
+
+    fn one_global(valtype: ValType, init: ConstExpr) -> Result<(), ValidationError> {
+        Module {
+            globals: vec![typed_global(valtype, init)],
+            ..Module::default()
+        }
+        .validate()
+    }
+
+    #[test]
+    fn global_init_type_matches() {
+        assert_eq!(one_global(ValType::I32, ConstExpr::I32(1)), Ok(()));
+        assert_eq!(one_global(ValType::I64, ConstExpr::I64(1)), Ok(()));
+        assert_eq!(one_global(ValType::F32, ConstExpr::F32(1.0)), Ok(()));
+        assert_eq!(one_global(ValType::F64, ConstExpr::F64(1.0)), Ok(()));
+    }
+
+    #[test]
+    fn global_init_type_mismatch_each_type() {
+        use ValType::*;
+        assert_eq!(one_global(I32, ConstExpr::I64(1)), mismatch(I32, I64));
+        assert_eq!(one_global(I64, ConstExpr::I32(1)), mismatch(I64, I32));
+        assert_eq!(one_global(F32, ConstExpr::F64(1.0)), mismatch(F32, F64));
+        assert_eq!(one_global(F64, ConstExpr::F32(1.0)), mismatch(F64, F32));
+        assert_eq!(one_global(I32, ConstExpr::F32(1.0)), mismatch(I32, F32));
+        assert_eq!(one_global(F64, ConstExpr::I64(1)), mismatch(F64, I64));
+    }
+
+    #[test]
+    fn global_init_get_import_type() {
+        // imported_global() is i32.
+        let mk = |t| Module {
+            imports: vec![imported_global()],
+            globals: vec![typed_global(t, ConstExpr::GlobalGet(0))],
+            ..Module::default()
+        };
+        assert_eq!(mk(ValType::I32).validate(), Ok(()));
+        assert_eq!(
+            mk(ValType::I64).validate(),
+            mismatch(ValType::I64, ValType::I32)
+        );
+    }
+
+    #[test]
+    fn global_init_get_defined_type() {
+        let mk = |t| Module {
+            globals: vec![
+                typed_global(ValType::F64, ConstExpr::F64(0.0)),
+                typed_global(t, ConstExpr::GlobalGet(0)),
+            ],
+            ..Module::default()
+        };
+        assert_eq!(mk(ValType::F64).validate(), Ok(()));
+        assert_eq!(
+            mk(ValType::I32).validate(),
+            mismatch(ValType::I32, ValType::F64)
+        );
+    }
+
+    #[test]
+    fn global_init_self_reference_uses_own_type() {
+        // Currently undetected: a self-reference is invalid per spec, but only the
+        // type is looked up here. Tracked in a separate issue.
+        assert_eq!(one_global(ValType::I32, ConstExpr::GlobalGet(0)), Ok(()));
+        assert_eq!(one_global(ValType::I64, ConstExpr::GlobalGet(0)), Ok(()));
+    }
+
+    #[test]
+    fn global_init_out_of_range_reports_index_error_first() {
+        let module = Module {
+            globals: vec![typed_global(ValType::I64, ConstExpr::GlobalGet(5))],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), global_get_err(5, 1));
+    }
+
+    #[test]
+    fn global_init_get_type_with_mixed_imports() {
+        // func + memory + i32 global imports: func/memory must not shift the global space.
+        let func_import = Import {
+            module: "env".to_string(),
+            name: "f".to_string(),
+            desc: ImportDesc::Func(0),
+        };
+        let mem_import = Import {
+            module: "env".to_string(),
+            name: "m".to_string(),
+            desc: ImportDesc::Memory(Limits { min: 1, max: None }),
+        };
+        let mk = |t| Module {
+            types: vec![func_type()],
+            imports: vec![func_import.clone(), mem_import.clone(), imported_global()],
+            globals: vec![typed_global(t, ConstExpr::GlobalGet(0))],
+            ..Module::default()
+        };
+        assert_eq!(mk(ValType::I32).validate(), Ok(()));
+        assert_eq!(
+            mk(ValType::F32).validate(),
+            mismatch(ValType::F32, ValType::I32)
         );
     }
 }

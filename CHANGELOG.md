@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `ValidationError::InitExprTypeMismatch`: `Module::validate()` rejects a global whose init expression type differs from its declared type (#221, PR #226)
 - `ValidationError::GlobalIndexOutOfRange`: `Module::validate()` rejects `global.get` in a global init or active element/data offset whose index is beyond the global space (imports + defined) (#221, PR #225)
 - `ValidationError::DuplicateExportName`: `Module::validate()` rejects modules with two exports of the same name, across all export kinds (#221, PR #224)
 - `wasm-dump --diff` binary section diff comparison (#44, PR #55)
@@ -39,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Behavior change:** `Module::validate()` now rejects modules with duplicate export names, which were previously accepted (#221, PR #224)
 - **Behavior change:** `Module::validate()` now rejects modules whose init expressions use `global.get` with an out-of-range global index, which were previously accepted; `global.get` inside expr-form element items is not checked (#221, PR #225)
+- **Behavior change:** `Module::validate()` now rejects globals whose init expression type does not match the declared type, which were previously accepted; element expr items and data/element offsets are not type-checked (#221, PR #226)
 - `ValidationError` is now `#[non_exhaustive]`: downstream `match` needs a wildcard arm (#191)
 - **Breaking:** `ParseError` is not `#[non_exhaustive]`, so the variants added in this release (`SectionOutOfOrder` in PR #155, `UnknownOpcode` / `MissingEnd` / `TooManyLocals` in PR #160, `UnsupportedDataFlagWide` / `UnsupportedElementFlagWide` in #201, PR #216) break exhaustive downstream `match` expressions
 - **Breaking:** function bodies containing opcodes outside the supported set (MVP, sign-extension, basic reference types, `0xFC` prefix; e.g. SIMD, threads, exception handling, tail call) are now rejected at parse time with `UnknownOpcode` instead of being accepted unread (PR #160)
