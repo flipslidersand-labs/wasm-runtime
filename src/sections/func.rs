@@ -1,7 +1,7 @@
 use crate::parser::{decode_leb128_u32, ParseError};
 use std::fmt;
 
-use super::ValType;
+use super::{skip_bytes, skip_leb, ValType};
 
 /// A single local variable declaration: `count` locals of the same `valtype`.
 #[derive(Debug, PartialEq, Clone)]
@@ -34,27 +34,6 @@ impl fmt::Display for FuncBody {
 pub(crate) struct BodyInfo {
     /// The body uses `memory.init` or `data.drop`, which need a datacount section.
     pub uses_data_index: bool,
-}
-
-/// Skips one LEB128 value of at most `max` bytes starting at `pos`; returns the
-/// position after it. Does not check the value's range.
-fn skip_leb(expr: &[u8], pos: usize, max: usize) -> Result<usize, ParseError> {
-    for i in 0..max {
-        match expr.get(pos + i) {
-            Some(b) if b & 0x80 == 0 => return Ok(pos + i + 1),
-            Some(_) => {}
-            None => return Err(ParseError::UnexpectedEof),
-        }
-    }
-    Err(ParseError::Leb128Overflow)
-}
-
-/// Skips `n` fixed bytes.
-fn skip_bytes(expr: &[u8], pos: usize, n: usize) -> Result<usize, ParseError> {
-    match pos.checked_add(n) {
-        Some(end) if end <= expr.len() => Ok(end),
-        _ => Err(ParseError::UnexpectedEof),
-    }
 }
 
 /// Walks a function body as an instruction stream: only each instruction's

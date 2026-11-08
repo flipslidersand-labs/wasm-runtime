@@ -148,31 +148,25 @@ fn read_global_type(payload: &[u8], pos: &mut usize) -> Result<GlobalType, Parse
     Ok(GlobalType { valtype, mutable })
 }
 
-/// Skips one LEB128 value of at most `max_len` bytes (5 for u32/i32, 10 for i64).
-fn skip_leb128(payload: &[u8], pos: &mut usize, max_len: usize) -> Result<(), ParseError> {
-    let mut len = 0;
-    loop {
-        if len == max_len {
-            return Err(ParseError::Leb128Overflow);
-        }
-        len += 1;
-        if *pos >= payload.len() {
-            return Err(ParseError::UnexpectedEof);
-        }
-        let byte = payload[*pos];
-        *pos += 1;
-        if byte & 0x80 == 0 {
-            return Ok(());
+/// Skips one LEB128 value of at most `max` bytes starting at `pos`; returns the
+/// position after it. Does not check the value's range.
+fn skip_leb(buf: &[u8], pos: usize, max: usize) -> Result<usize, ParseError> {
+    for i in 0..max {
+        match buf.get(pos + i) {
+            Some(b) if b & 0x80 == 0 => return Ok(pos + i + 1),
+            Some(_) => {}
+            None => return Err(ParseError::UnexpectedEof),
         }
     }
+    Err(ParseError::Leb128Overflow)
 }
 
-fn advance(payload: &[u8], pos: &mut usize, n: usize) -> Result<(), ParseError> {
-    if *pos + n > payload.len() {
-        return Err(ParseError::UnexpectedEof);
+/// Skips `n` fixed bytes starting at `pos`; returns the position after them.
+fn skip_bytes(buf: &[u8], pos: usize, n: usize) -> Result<usize, ParseError> {
+    match pos.checked_add(n) {
+        Some(end) if end <= buf.len() => Ok(end),
+        _ => Err(ParseError::UnexpectedEof),
     }
-    *pos += n;
-    Ok(())
 }
 
 /// Reads a constant initializer expression, returning its raw bytes including the
@@ -188,13 +182,13 @@ fn read_init_expr(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError
         let op = payload[*pos];
         *pos += 1;
         match op {
-            0x0B => break,                                // end
-            0x41 | 0x23 => skip_leb128(payload, pos, 5)?, // i32.const, global.get
-            0x42 => skip_leb128(payload, pos, 10)?,       // i64.const
-            0x43 => advance(payload, pos, 4)?,            // f32.const
-            0x44 => advance(payload, pos, 8)?,            // f64.const
-            0xD2 => skip_leb128(payload, pos, 5)?,        // ref.func funcidx
-            0xD0 => advance(payload, pos, 1)?,            // ref.null heaptype
+            0x0B => break,                                     // end
+            0x41 | 0x23 => *pos = skip_leb(payload, *pos, 5)?, // i32.const, global.get
+            0x42 => *pos = skip_leb(payload, *pos, 10)?,       // i64.const
+            0x43 => *pos = skip_bytes(payload, *pos, 4)?,      // f32.const
+            0x44 => *pos = skip_bytes(payload, *pos, 8)?,      // f64.const
+            0xD2 => *pos = skip_leb(payload, *pos, 5)?,        // ref.func funcidx
+            0xD0 => *pos = skip_bytes(payload, *pos, 1)?,      // ref.null heaptype
             _ => return Err(ParseError::UnsupportedInitExpr(op)),
         }
     }
