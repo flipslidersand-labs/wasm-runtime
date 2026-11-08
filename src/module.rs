@@ -199,7 +199,12 @@ pub enum ValidationError {
         min: u32,
         max: u32,
     },
+    /// A memory declares `min` or `max` above the 65536-page (4 GiB) limit.
+    MemoryLimitExceeded { field: &'static str, value: u32 },
 }
+
+/// Maximum memory size in 64 KiB pages (4 GiB) for 32-bit memories.
+const MAX_MEMORY_PAGES: u32 = 65536;
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -263,6 +268,11 @@ impl fmt::Display for ValidationError {
                 f,
                 "{} size minimum {} must not be greater than maximum {}",
                 kind, min, max
+            ),
+            ValidationError::MemoryLimitExceeded { field, value } => write!(
+                f,
+                "memory size {} {} must not exceed {} pages",
+                field, value, MAX_MEMORY_PAGES
             ),
         }
     }
@@ -333,6 +343,22 @@ impl Module {
             .map(|t| ("table", &t.limits))
             .chain(self.memories.iter().map(|m| ("memory", m)));
         for (kind, limits) in imported_limits.chain(local_limits) {
+            if kind == "memory" {
+                if limits.min > MAX_MEMORY_PAGES {
+                    return Err(ValidationError::MemoryLimitExceeded {
+                        field: "minimum",
+                        value: limits.min,
+                    });
+                }
+                if let Some(max) = limits.max {
+                    if max > MAX_MEMORY_PAGES {
+                        return Err(ValidationError::MemoryLimitExceeded {
+                            field: "maximum",
+                            value: max,
+                        });
+                    }
+                }
+            }
             if let Some(max) = limits.max {
                 if limits.min > max {
                     return Err(ValidationError::LimitsMinGreaterThanMax {
@@ -1032,5 +1058,83 @@ mod tests {
             ..Module::default()
         };
         assert_eq!(module.validate(), Ok(()));
+    }
+
+    fn mem_module(min: u32, max: Option<u32>) -> Module {
+        Module {
+            memories: vec![Limits { min, max }],
+            ..Module::default()
+        }
+    }
+
+    #[test]
+    fn memory_limits_at_65536_accepted() {
+        assert_eq!(mem_module(65536, Some(65536)).validate(), Ok(()));
+        assert_eq!(mem_module(65536, None).validate(), Ok(()));
+    }
+
+    #[test]
+    fn memory_min_over_65536_rejected() {
+        assert_eq!(
+            mem_module(65537, None).validate(),
+            Err(ValidationError::MemoryLimitExceeded {
+                field: "minimum",
+                value: 65537
+            })
+        );
+    }
+
+    #[test]
+    fn memory_max_over_65536_rejected() {
+        assert_eq!(
+            mem_module(0, Some(65537)).validate(),
+            Err(ValidationError::MemoryLimitExceeded {
+                field: "maximum",
+                value: 65537
+            })
+        );
+    }
+
+    #[test]
+    fn memory_import_over_65536_rejected() {
+        let m = Module {
+            imports: vec![Import {
+                module: "m".to_string(),
+                name: "mem".to_string(),
+                desc: ImportDesc::Memory(Limits {
+                    min: 0,
+                    max: Some(65537),
+                }),
+            }],
+            ..Module::default()
+        };
+        assert_eq!(
+            m.validate(),
+            Err(ValidationError::MemoryLimitExceeded {
+                field: "maximum",
+                value: 65537
+            })
+        );
+    }
+
+    #[test]
+    fn table_limits_over_65536_not_affected() {
+        let module = Module {
+            tables: vec![limits_table(70000, Some(80000))],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
+    }
+
+    #[test]
+    fn memory_limit_exceeded_display() {
+        let e = ValidationError::MemoryLimitExceeded {
+            field: "maximum",
+            value: 65537,
+        };
+        assert_eq!(
+            e.to_string(),
+            "memory size maximum 65537 must not exceed 65536 pages"
+        );
     }
 }
