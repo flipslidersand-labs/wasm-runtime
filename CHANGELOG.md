@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `keywords`, `categories`, `readme`, `exclude` fields in `Cargo.toml` for crates.io (#75, PR #81)
 - Memory limits validation: `min`/`max` above 65536 pages is rejected with `ValidationError::MemoryLimitExceeded` (#185, PR #189)
 
+### Changed
+- `ValidationError` is now `#[non_exhaustive]`: downstream `match` needs a wildcard arm (#191)
+
 ### Fixed
 - `parse_header`: replaced `try_into().unwrap()` with direct byte indexing to eliminate hidden panics (#65, PR #76)
 - `decode_const_expr`: same unwrap removal for f32/f64 byte array construction (#65, PR #76)
