@@ -32,7 +32,7 @@ pub struct Module {
     pub exports: Vec<Export>,
     /// Start section: index of the module's entry-point function, if present.
     pub start: Option<u32>,
-    /// Element section: table-initializer segments (flag 0 only).
+    /// Element section: table-initializer segments (all encodings, flag 0..=7).
     pub elements: Vec<ElementSegment>,
     /// Code section: one body per locally-defined function.
     pub code: Vec<FuncBody>,
@@ -138,8 +138,12 @@ pub fn parse_module_with_events(
     Ok(module)
 }
 
-/// Like [`parse_module`] but returns [`ParseErrorContext`] on failure, which
-/// includes the byte offset and section id where the error occurred.
+/// Like [`parse_module`] but returns [`ParseErrorContext`] on failure.
+///
+/// Header errors carry offset 0 (no section id). Errors while decoding a
+/// section's payload carry that section's offset and id. Errors raised by the
+/// section iterator itself (malformed section headers) are wrapped without an
+/// offset or section id.
 pub fn parse_module_with_context(bytes: &[u8]) -> Result<Module, ParseErrorContext> {
     let version = parse_header(bytes).map_err(|e| ParseErrorContext::new(e).with_offset(0))?;
     let mut module = Module {

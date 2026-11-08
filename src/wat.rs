@@ -1,7 +1,10 @@
 //! Converts a decoded [`Module`] to WebAssembly Text Format (WAT).
 //!
 //! Code bodies are represented as placeholders — full decompilation is out of
-//! scope. The output is valid WAT for the sections that are fully decoded.
+//! scope. The output is a human-readable approximation, not guaranteed to be
+//! re-parseable WAT: some constructs are printed in a non-standard form (for
+//! example `(global (mut i32) (7))` and `(offset 16)`), and element segments
+//! are not emitted at all.
 
 use crate::module::Module;
 use crate::sections::{ExportKind, ImportDesc, ValType};
