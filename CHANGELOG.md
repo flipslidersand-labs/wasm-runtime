@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Memory limits validation: `min`/`max` above 65536 pages is rejected with `ValidationError::MemoryLimitExceeded` (#185, PR #189)
 - `wasm-dump --explain` byte-level annotation of the binary (#61, PR #89)
 - `wasm-dump --max-size <bytes>` input size limit, default 256 MiB (268435456 bytes); oversized input exits 1, also applies to both `--diff` inputs (PR #182)
-- `wasm-dump --explain-max-lines <N>` overrides the `--explain` output line cap (default 100000 unchanged, `0` = unlimited) (#212)
+- `wasm-dump --explain-max-lines <N>` overrides the `--explain` output line cap (default 100000 unchanged, `0` = unlimited, which can use a lot of memory on large inputs) (#212)
 - `wasm_runtime::prelude` module re-exporting the common types and parse functions (#73, PR #83)
 - `wasm-dump` flags can be combined and given in any order (`--verbose --validate --stats`, etc.); unknown flags now print `error: unknown flag: --foo` (#72, PR #87)
 - `ParseErrorContext` (byte offset and section id) and `parse_module_with_context()` (#60, PR #85)

@@ -40,13 +40,21 @@ fn parse_max_size(v: Option<&String>) -> Result<u64, String> {
 }
 
 fn parse_explain_max_lines(v: Option<&String>) -> Result<usize, String> {
-    match v.and_then(|s| s.parse::<usize>().ok()) {
-        None => Err(
+    let s = v.ok_or_else(|| {
+        "--explain-max-lines requires a line count (non-negative integer, 0 = unlimited)"
+            .to_string()
+    })?;
+    match s.parse::<usize>() {
+        Ok(0) => Ok(usize::MAX),
+        Ok(n) => Ok(n),
+        Err(e) if *e.kind() == std::num::IntErrorKind::PosOverflow => Err(format!(
+            "--explain-max-lines value is out of range (max {})",
+            usize::MAX
+        )),
+        Err(_) => Err(
             "--explain-max-lines requires a line count (non-negative integer, 0 = unlimited)"
                 .to_string(),
         ),
-        Some(0) => Ok(usize::MAX),
-        Some(n) => Ok(n),
     }
 }
 
@@ -55,6 +63,7 @@ fn print_usage() {
         "Usage: wasm-dump [--verbose|-v] [--validate] [--stats] [--timing] [--wat] [--explain] [--explain-max-lines <N>] [--max-size <bytes>] <file.wasm>"
     );
     eprintln!("       wasm-dump --diff [--max-size <bytes>] <a.wasm> <b.wasm>");
+    eprintln!("  --explain-max-lines <N>: line cap for --explain (default 100000; 0 = unlimited, may use lots of memory)");
 }
 
 /// Read a file, refusing inputs larger than `max` bytes.

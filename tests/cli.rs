@@ -316,7 +316,26 @@ fn explain_max_lines_invalid_value_exits_one() {
         .assert()
         .failure()
         .code(1)
-        .stderr(predicate::str::contains("--explain-max-lines"));
+        .stderr(predicate::str::contains(
+            "--explain-max-lines requires a line count",
+        ));
+}
+
+#[test]
+fn explain_max_lines_overflow_reports_out_of_range() {
+    wasm_dump()
+        .args([
+            "--explain",
+            "--explain-max-lines",
+            "99999999999999999999999999",
+            MINIMAL_WASM,
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "--explain-max-lines value is out of range",
+        ));
 }
 
 #[test]
@@ -326,7 +345,9 @@ fn explain_max_lines_missing_value_exits_one() {
         .assert()
         .failure()
         .code(1)
-        .stderr(predicate::str::contains("--explain-max-lines"));
+        .stderr(predicate::str::contains(
+            "--explain-max-lines requires a line count",
+        ));
 }
 
 #[test]
