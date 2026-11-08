@@ -311,6 +311,160 @@ mod tests {
         }
     }
 
+    // ── scan_expr: immediates of previously untested opcodes ──────────────
+
+    #[test]
+    fn select_t_skips_exactly_count_type_bytes() {
+        // select t* with 0, 1 and 2 value types
+        assert!(scan(&[0x1C, 0x00, 0x0B]).is_ok());
+        assert!(scan(&[0x1C, 0x01, 0x7F, 0x0B]).is_ok());
+        assert!(scan(&[0x1C, 0x02, 0x7F, 0x7E, 0x0B]).is_ok());
+        // count 1 swallows the 0x0B, so the body is left without an end
+        assert_eq!(scan(&[0x1C, 0x01, 0x0B]), Err(ParseError::MissingEnd));
+    }
+
+    #[test]
+    fn select_t_count_beyond_remaining_bytes_is_unexpected_eof() {
+        assert_eq!(
+            scan(&[0x1C, 0x05, 0x7F, 0x0B]),
+            Err(ParseError::UnexpectedEof)
+        );
+        // the vec length itself is missing
+        assert_eq!(scan(&[0x1C]), Err(ParseError::UnexpectedEof));
+        // a huge count is an EOF
+        assert_eq!(
+            scan(&[0x1C, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 0x0B]),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn ref_null_is_null_and_func_immediates() {
+        // ref.null funcref; ref.is_null; drop
+        assert!(scan(&[0xD0, 0x70, 0xD1, 0x1A, 0x0B]).is_ok());
+        // the reftype byte is skipped even if it looks like `end`
+        assert_eq!(scan(&[0xD0, 0x0B]), Err(ParseError::MissingEnd));
+        assert_eq!(scan(&[0xD0]), Err(ParseError::UnexpectedEof));
+        // ref.is_null takes no immediate
+        assert!(scan(&[0xD1, 0x0B]).is_ok());
+        // ref.func with a one-byte function index
+        assert!(scan(&[0xD2, 0x00, 0x1A, 0x0B]).is_ok());
+        assert_eq!(scan(&[0xD2]), Err(ParseError::UnexpectedEof));
+        assert_eq!(
+            scan(&[0xD2, 0x80, 0x80, 0x80, 0x80, 0x80, 0x0B]),
+            Err(ParseError::Leb128Overflow)
+        );
+    }
+
+    #[test]
+    fn table_get_set_and_memory_size_grow_take_one_index() {
+        for op in [0x25u8, 0x26, 0x3F, 0x40] {
+            assert!(scan(&[op, 0x00, 0x0B]).is_ok(), "op {op:#x}");
+            // the index swallows the 0x0B
+            assert_eq!(scan(&[op, 0x0B]), Err(ParseError::MissingEnd), "op {op:#x}");
+            assert_eq!(scan(&[op]), Err(ParseError::UnexpectedEof), "op {op:#x}");
+        }
+    }
+
+    #[test]
+    fn table_get_set_read_a_multi_byte_index() {
+        for op in [0x25u8, 0x26] {
+            // index 0x80 0x06 is read whole; 0x06 is not seen as an opcode
+            assert!(scan(&[op, 0x80, 0x06, 0x0B]).is_ok(), "op {op:#x}");
+            assert_eq!(
+                scan(&[op, 0x80, 0x80, 0x80, 0x80, 0x80, 0x0B]),
+                Err(ParseError::Leb128Overflow),
+                "op {op:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn prefix_fc_single_index_operations() {
+        // memory.fill, elem.drop, table.grow, table.size, table.fill
+        for sub in [11u8, 13, 15, 16, 17] {
+            let info = scan(&[0xFC, sub, 0x00, 0x0B]).unwrap();
+            assert!(!info.uses_data_index, "sub {sub}");
+            // exactly one index: it swallows the 0x0B
+            assert_eq!(
+                scan(&[0xFC, sub, 0x0B]),
+                Err(ParseError::MissingEnd),
+                "sub {sub}"
+            );
+            assert_eq!(
+                scan(&[0xFC, sub]),
+                Err(ParseError::UnexpectedEof),
+                "sub {sub}"
+            );
+        }
+    }
+
+    #[test]
+    fn prefix_fc_two_index_operations() {
+        // memory.copy, table.init, table.copy
+        for sub in [10u8, 12, 14] {
+            assert!(scan(&[0xFC, sub, 0x00, 0x00, 0x0B]).is_ok(), "sub {sub}");
+            assert_eq!(
+                scan(&[0xFC, sub, 0x00, 0x0B]),
+                Err(ParseError::MissingEnd),
+                "sub {sub}"
+            );
+        }
+    }
+
+    #[test]
+    fn prefix_fc_sub_opcode_18_is_rejected() {
+        assert_eq!(
+            scan(&[0xFC, 18, 0x00, 0x0B]),
+            Err(ParseError::UnknownOpcode(0xFC))
+        );
+        // the sub-opcode is a LEB128: a missing one is an EOF, not unknown
+        assert_eq!(scan(&[0xFC]), Err(ParseError::UnexpectedEof));
+    }
+
+    #[test]
+    fn i64_const_accepts_ten_byte_leb_and_rejects_eleven() {
+        // 9 continuation bytes + terminator = 10 bytes
+        let mut ok = vec![0x42];
+        ok.extend_from_slice(&[0x80; 9]);
+        ok.extend_from_slice(&[0x00, 0x1A, 0x0B]);
+        assert!(scan(&ok).is_ok());
+
+        // 10 continuation bytes + terminator = 11 bytes
+        let mut bad = vec![0x42];
+        bad.extend_from_slice(&[0x80; 10]);
+        bad.extend_from_slice(&[0x00, 0x1A, 0x0B]);
+        assert_eq!(scan(&bad), Err(ParseError::Leb128Overflow));
+
+        // ran out of bytes while still inside the 10-byte window
+        let mut short = vec![0x42];
+        short.extend_from_slice(&[0x80; 9]);
+        assert_eq!(scan(&short), Err(ParseError::UnexpectedEof));
+    }
+
+    #[test]
+    fn if_else_end_depth_is_tracked() {
+        // i32.const 0; if (empty) else end; end
+        assert!(scan(&[0x41, 0x00, 0x04, 0x40, 0x05, 0x0B, 0x0B]).is_ok());
+        // else does not open a block: the if is still open after one end
+        assert_eq!(scan(&[0x04, 0x40, 0x05, 0x0B]), Err(ParseError::MissingEnd));
+        // else does not close a block either: the final end is the body's
+        assert_eq!(
+            scan(&[0x04, 0x40, 0x05, 0x0B, 0x0B, 0x00]),
+            Err(ParseError::SizeMismatch)
+        );
+        // nested if/else inside both arms
+        assert!(scan(&[
+            0x04, 0x40, 0x04, 0x40, 0x05, 0x0B, 0x05, 0x04, 0x40, 0x05, 0x0B, 0x0B, 0x0B
+        ])
+        .is_ok());
+        // the same nesting with one end too few
+        assert_eq!(
+            scan(&[0x04, 0x40, 0x04, 0x40, 0x05, 0x0B, 0x05, 0x04, 0x40, 0x05, 0x0B, 0x0B]),
+            Err(ParseError::MissingEnd)
+        );
+    }
+
     // ── decode_code_section ───────────────────────────────────────────────
 
     #[test]
