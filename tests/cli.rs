@@ -476,6 +476,7 @@ fn control_chars_in_names_are_escaped_in_output() {
         vec!["--wat"],
     ] {
         let out = wasm_dump().args(&flags).arg(&path).output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "exit code for {:?}", flags);
         outputs.push((flags, out));
     }
     std::fs::remove_file(&path).ok();
@@ -500,4 +501,30 @@ fn control_chars_in_names_are_escaped_in_output() {
     ] {
         assert!(verbose.contains(want), "missing {want:?} in:\n{verbose}");
     }
+}
+
+#[test]
+fn control_chars_in_validation_error_are_escaped_on_stderr() {
+    let mut m = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+    let mut exp = vec![1];
+    exp.extend(name_bytes("bad\x1b[2J\x07\nfake"));
+    exp.extend([0x00, 0x05]); // func index 5: out of range
+    m.extend(section(7, &exp));
+    let path = std::env::temp_dir().join(format!("wasm-dump-176v-{}.wasm", std::process::id()));
+    std::fs::write(&path, m).unwrap();
+    let out = wasm_dump().arg("--validate").arg(&path).output().unwrap();
+    std::fs::remove_file(&path).ok();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(
+        stderr.contains("out of range"),
+        "unexpected stderr:\n{stderr}"
+    );
+    for b in [0x1bu8, 0x07] {
+        assert!(
+            !out.stderr.contains(&b),
+            "raw {b:#04x} in stderr:\n{stderr}"
+        );
+        assert!(!out.stdout.contains(&b), "raw {b:#04x} in stdout");
+    }
+    assert!(stderr.contains("bad\\u{1b}[2J\\u{7}\\u{a}fake"), "{stderr}");
 }
