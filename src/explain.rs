@@ -170,7 +170,14 @@ fn annotate_export_section(c: &mut Cursor, payload: &[u8], base: usize) {
         }
         let name_bytes = &pc.bytes[pc.pos..pc.pos + name_len];
         let name = std::str::from_utf8(name_bytes).unwrap_or("<invalid utf8>");
-        pc.emit(name_len, format!("export[{}] name: \"{}\"", i, name));
+        pc.emit(
+            name_len,
+            format!(
+                "export[{}] name: \"{}\"",
+                i,
+                crate::sections::display_name(name)
+            ),
+        );
         if pc.remaining() < 1 {
             break;
         }
