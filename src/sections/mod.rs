@@ -27,12 +27,17 @@ pub use types::{
 /// True for characters that must not reach a terminal raw: control characters
 /// (including C1, U+0080..=U+009F) and bidi controls (U+202A..=U+202E,
 /// U+2066..=U+2069), bidi marks (U+200E, U+200F, U+061C) and line/paragraph
-/// separators (U+2028, U+2029).
+/// separators (U+2028, U+2029), and invisible format characters that make
+/// names look identical (U+200B, U+FEFF, U+2060..=U+2064, U+00AD).
+///
+/// U+200C (ZWNJ) and U+200D (ZWJ) are deliberately NOT escaped: ZWNJ is
+/// required by some scripts and ZWJ builds emoji sequences, so escaping them
+/// would degrade legitimate names.
 pub(crate) fn is_unsafe_char(c: char) -> bool {
     c.is_control()
         || matches!(
             c as u32,
-            0x061C | 0x200E | 0x200F | 0x2028 | 0x2029 | 0x202A..=0x202E | 0x2066..=0x2069
+            0x00AD | 0x061C | 0x200B | 0x200E | 0x200F | 0x2028 | 0x2029 | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF
         )
 }
 
@@ -236,6 +241,26 @@ mod tests {
         );
         assert_eq!(checked_end(2, 3, 5), Ok(5));
         assert_eq!(checked_end(2, 4, 5), Err(ParseError::UnexpectedEof));
+    }
+
+    #[test]
+    fn display_name_escapes_invisible_chars_but_keeps_zwj_zwnj() {
+        assert_eq!(
+            display_name("\u{200b}\u{feff}\u{2060}\u{2064}\u{ad}"),
+            "\\u{200b}\\u{feff}\\u{2060}\\u{2064}\\u{ad}"
+        );
+        assert_eq!(display_name("\u{2065}"), "\u{2065}");
+        assert_eq!(display_name("a\u{200c}b\u{200d}c"), "a\u{200c}b\u{200d}c");
+    }
+
+    #[test]
+    fn import_display_quotes_module_and_name() {
+        let imp = Import {
+            module: "a\"::b".to_string(),
+            name: "c".to_string(),
+            desc: ImportDesc::Func(0),
+        };
+        assert_eq!(imp.to_string(), "\"a\\\"::b\"::\"c\"  Func(0)");
     }
 
     #[test]
@@ -1068,7 +1093,7 @@ mod tests {
             name: "log".to_string(),
             desc: ImportDesc::Func(2),
         };
-        assert_eq!(imp.to_string(), "env::log  Func(2)");
+        assert_eq!(imp.to_string(), "\"env\"::\"log\"  Func(2)");
     }
 
     #[test]
@@ -1081,7 +1106,7 @@ mod tests {
                 mutable: true,
             },
         };
-        assert_eq!(imp.to_string(), "env::g  Global(i32 mut)");
+        assert_eq!(imp.to_string(), "\"env\"::\"g\"  Global(i32 mut)");
     }
 
     #[test]

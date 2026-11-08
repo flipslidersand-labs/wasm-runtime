@@ -457,4 +457,13 @@ mod tests {
             "\\u{200e}\\u{200f}\\u{61c}\\u{2028}\\u{2029}"
         );
     }
+
+    #[test]
+    fn wat_string_escapes_invisible_chars_but_keeps_zwj_zwnj() {
+        assert_eq!(
+            wat_string("\u{200b}\u{feff}\u{2060}\u{2064}\u{ad}"),
+            "\\u{200b}\\u{feff}\\u{2060}\\u{2064}\\u{ad}"
+        );
+        assert_eq!(wat_string("\u{200c}\u{200d}"), "\u{200c}\u{200d}");
+    }
 }
