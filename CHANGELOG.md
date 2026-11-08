@@ -53,7 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Section decoders clamp LEB128 `count` allocation by payload length, so a huge count with a tiny payload no longer over-allocates (#119, PR #136)
 - `decode_leb128_signed` rejects non-sign-extended unused bits in the final byte with `Leb128Overflow` (PR #171)
 - `diff_modules` validates the magic/version header (PR #170)
-- `--explain` no longer panics when a locals declaration overruns the function body (PR #163)
+- `--explain` no longer panics when a locals declaration overruns the function body (PR #163); it now also annotates the overrun and resumes at the body end instead of misaligning the following bodies (#201, PR #215)
+- **Behavior change:** `ParseErrorContext` returned by `parse_module_with_context` / `parse_module_with_options` now carries `offset` and `section_id` for errors raised while iterating sections (header, order, size); they were `None` before. `offset` is the section id byte position for these errors and the payload start for body-decode errors (#201, PR #215)
 - WAT output: import/export names are escaped as WAT strings (PR #172); table `max` no longer fuses with the reftype, e.g. `10funcref` (#138, PR #158)
 
 ## [0.1.0] - 2026-08-18
