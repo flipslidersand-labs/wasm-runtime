@@ -309,6 +309,49 @@ fn invalid_magic_exits_nonzero() {
         .stderr(predicate::str::contains("error:"));
 }
 
+// ── デコードエラー (#168) ─────────────────────────────────
+
+/// type セクションの functype マーカーが 0xFF の壊れたモジュールを tmp に書く。
+fn write_bad_type_section(name: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(name);
+    std::fs::write(&path, b"\x00\x61\x73\x6D\x01\x00\x00\x00\x01\x02\x01\xFF").unwrap();
+    path
+}
+
+#[test]
+fn default_output_decode_error_exits_one() {
+    let path = write_bad_type_section("bad_type_default_168.wasm");
+    wasm_dump()
+        .arg(path.to_str().unwrap())
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("type"))
+        .stdout(predicate::str::contains("decode error"));
+}
+
+#[test]
+fn verbose_decode_error_exits_one() {
+    let path = write_bad_type_section("bad_type_verbose_168.wasm");
+    wasm_dump()
+        .arg("--verbose")
+        .arg(path.to_str().unwrap())
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("expected 0x60 functype marker"));
+}
+
+#[test]
+fn explain_decode_error_keeps_exit_zero() {
+    let path = write_bad_type_section("bad_type_explain_168.wasm");
+    wasm_dump()
+        .arg("--explain")
+        .arg(path.to_str().unwrap())
+        .assert()
+        .success();
+}
+
 // ── --diff ───────────────────────────────────────────────
 
 #[test]
