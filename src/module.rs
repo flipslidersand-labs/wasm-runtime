@@ -300,7 +300,8 @@ pub enum ValidationError {
     /// An init expression (global init, active segment offset) uses `global.get`
     /// with an index beyond the global space.
     GlobalIndexOutOfRange { index: u32, global_space: usize },
-    /// A global init expression has a type different from the global's declared type.
+    /// An init expression (global init, active segment offset) has the wrong type:
+    /// a global's init differs from its declared type, or an offset is not `i32`.
     InitExprTypeMismatch { expected: ValType, found: ValType },
 }
 
