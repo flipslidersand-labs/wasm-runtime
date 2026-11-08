@@ -9,9 +9,9 @@ use crate::sections::{
     decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
     decode_element_section, decode_export_section, decode_function_section, decode_global_section,
     decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
-    decode_type_section, scan_expr, CustomSection, DataMode, DataSegment, ElementInit, ElementMode,
-    ElementSegment, Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits,
-    Table,
+    decode_type_section, scan_expr, ConstExpr, CustomSection, DataMode, DataSegment, ElementInit,
+    ElementMode, ElementSegment, Export, ExportKind, FuncBody, FuncType, Global, Import,
+    ImportDesc, Limits, Table,
 };
 use std::fmt;
 
@@ -297,6 +297,9 @@ pub enum ValidationError {
     MemoryLimitExceeded { field: &'static str, value: u32 },
     /// Two exports share the same name (export names are unique across all kinds).
     DuplicateExportName { name: String },
+    /// An init expression (global init, active segment offset) uses `global.get`
+    /// with an index beyond the global space.
+    GlobalIndexOutOfRange { index: u32, global_space: usize },
 }
 
 /// Maximum memory size in 64 KiB pages (4 GiB) for 32-bit memories.
@@ -381,6 +384,14 @@ impl fmt::Display for ValidationError {
                 f,
                 "duplicate export name \"{}\"",
                 crate::sections::display_name(name)
+            ),
+            ValidationError::GlobalIndexOutOfRange {
+                index,
+                global_space,
+            } => write!(
+                f,
+                "init expression global index {} out of range (global space {})",
+                index, global_space
             ),
         }
     }
@@ -572,6 +583,34 @@ impl Module {
                 .any(|b| matches!(scan_expr(&b.expr), Ok(info) if info.uses_data_index))
         {
             return Err(ValidationError::DataCountRequired);
+        }
+
+        // 8. `global.get` in init expressions (global init, active element / data
+        //    offsets) must name a global within the global space. Stricter rules
+        //    (imported-only references) are not checked here.
+        let element_offsets = self.elements.iter().filter_map(|e| match &e.mode {
+            ElementMode::Active { offset, .. } => Some(offset),
+            _ => None,
+        });
+        let data_offsets = self.data.iter().filter_map(|d| match &d.mode {
+            DataMode::Active { offset, .. } => Some(offset),
+            _ => None,
+        });
+        let init_exprs = self
+            .globals
+            .iter()
+            .map(|g| &g.init)
+            .chain(element_offsets)
+            .chain(data_offsets);
+        for expr in init_exprs {
+            if let ConstExpr::GlobalGet(index) = expr {
+                if *index as usize >= global_space {
+                    return Err(ValidationError::GlobalIndexOutOfRange {
+                        index: *index,
+                        global_space,
+                    });
+                }
+            }
         }
 
         Ok(())
@@ -1319,6 +1358,125 @@ mod tests {
         assert_eq!(
             e.to_string(),
             "memory size maximum 65537 must not exceed 65536 pages"
+        );
+    }
+
+    fn imported_global() -> Import {
+        Import {
+            module: "env".to_string(),
+            name: "g".to_string(),
+            desc: ImportDesc::Global {
+                valtype: ValType::I32,
+                mutable: false,
+            },
+        }
+    }
+
+    fn global_with_init(init: ConstExpr) -> Global {
+        Global {
+            global_type: crate::sections::GlobalType {
+                valtype: ValType::I32,
+                mutable: false,
+            },
+            init,
+        }
+    }
+
+    fn global_get_err(index: u32, global_space: usize) -> Result<(), ValidationError> {
+        Err(ValidationError::GlobalIndexOutOfRange {
+            index,
+            global_space,
+        })
+    }
+
+    #[test]
+    fn global_init_get_boundary() {
+        // space = 1 import + 1 defined = 2
+        let mk = |i| Module {
+            imports: vec![imported_global()],
+            globals: vec![global_with_init(ConstExpr::GlobalGet(i))],
+            ..Module::default()
+        };
+        assert_eq!(mk(0).validate(), Ok(()));
+        assert_eq!(mk(1).validate(), Ok(()));
+        assert_eq!(mk(2).validate(), global_get_err(2, 2));
+    }
+
+    #[test]
+    fn global_init_get_out_of_range_without_imports() {
+        let module = Module {
+            globals: vec![global_with_init(ConstExpr::GlobalGet(7))],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), global_get_err(7, 1));
+    }
+
+    #[test]
+    fn element_offset_global_get_range() {
+        let mk = |i| Module {
+            imports: vec![imported_global()],
+            tables: vec![Table {
+                reftype: crate::sections::RefType::FuncRef,
+                limits: Limits { min: 1, max: None },
+            }],
+            elements: vec![ElementSegment {
+                mode: ElementMode::Active {
+                    table_index: 0,
+                    offset: ConstExpr::GlobalGet(i),
+                },
+                reftype: crate::sections::RefType::FuncRef,
+                init: ElementInit::FuncIndices(vec![]),
+            }],
+            ..Module::default()
+        };
+        assert_eq!(mk(0).validate(), Ok(()));
+        assert_eq!(mk(1).validate(), global_get_err(1, 1));
+    }
+
+    #[test]
+    fn data_offset_global_get_range() {
+        let mk = |i| Module {
+            imports: vec![imported_global()],
+            memories: vec![Limits { min: 1, max: None }],
+            data: vec![DataSegment {
+                mode: crate::sections::DataMode::Active {
+                    memory_index: 0,
+                    offset: ConstExpr::GlobalGet(i),
+                },
+                bytes: vec![],
+            }],
+            ..Module::default()
+        };
+        assert_eq!(mk(0).validate(), Ok(()));
+        assert_eq!(mk(1).validate(), global_get_err(1, 1));
+    }
+
+    #[test]
+    fn global_get_check_runs_after_existing_checks() {
+        // both a bad global.get and a bad start index: the start error wins.
+        let module = Module {
+            globals: vec![global_with_init(ConstExpr::GlobalGet(9))],
+            start: Some(3),
+            ..Module::default()
+        };
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::StartFuncIndexOutOfRange {
+                index: 3,
+                func_space: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn global_index_out_of_range_display() {
+        let e = ValidationError::GlobalIndexOutOfRange {
+            index: 4,
+            global_space: 2,
+        };
+        assert_eq!(
+            e.to_string(),
+            "init expression global index 4 out of range (global space 2)"
         );
     }
 }
