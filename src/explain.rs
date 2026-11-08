@@ -297,6 +297,7 @@ fn annotate_code_section(c: &mut Cursor, payload: &[u8], base: usize) {
         // Locals may overrun the body; always resume at the declared body end.
         if pc.pos > body_end {
             pc.pos = body_end;
+            pc.emit(0, format!("body[{}] locals overrun body", i));
         }
         let expr_len = body_end.saturating_sub(pc.pos);
         if expr_len > 0 && pc.remaining() >= expr_len {
@@ -632,6 +633,12 @@ mod tests {
             .expect("body[1] size line");
         // payload starts after header (8) + id (1) + size (1)
         assert_eq!(l.offset, 10 + 4);
+        // the overrun is reported, at body_end
+        let o = lines
+            .iter()
+            .find(|l| l.annotation == "body[0] locals overrun body")
+            .expect("overrun line");
+        assert_eq!(o.offset, 10 + 4);
     }
 
     #[test]

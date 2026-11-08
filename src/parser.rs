@@ -76,7 +76,10 @@ impl std::error::Error for ParseError {}
 pub struct ParseErrorContext {
     /// The underlying parse error.
     pub error: ParseError,
-    /// Byte offset of the section payload that triggered the error, if known.
+    /// Byte offset of the error, if known: the section payload start for
+    /// errors while decoding a section body; the section's id byte for a bad
+    /// section header (malformed/truncated size, out-of-order, size exceeding
+    /// the input); `0` for a bad module header.
     pub offset: Option<usize>,
     /// Section id that was being decoded when the error occurred, if known.
     pub section_id: Option<u8>,

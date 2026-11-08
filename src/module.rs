@@ -139,6 +139,8 @@ impl MapParseError for ParseErrorContext {
             Some((offset, id)) => ParseErrorContext::new(e)
                 .with_offset(offset)
                 .with_section(id),
+            // Not reached today: every error `SectionIter` returns records its
+            // location first. Kept as a safe fallback.
             None => ParseErrorContext::new(e),
         }
     }
