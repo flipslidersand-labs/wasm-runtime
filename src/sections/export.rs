@@ -63,10 +63,7 @@ pub fn decode_export_section(payload: &[u8]) -> Result<Vec<Export>, ParseError> 
         let (name_len, n) = decode_leb128_u32(payload, pos)?;
         pos += n;
 
-        let end = pos + name_len as usize;
-        if end > payload.len() {
-            return Err(ParseError::UnexpectedEof);
-        }
+        let end = super::checked_end(pos, name_len as usize, payload.len())?;
         let name = std::str::from_utf8(&payload[pos..end])
             .map_err(|_| ParseError::InvalidUtf8)?
             .to_string();

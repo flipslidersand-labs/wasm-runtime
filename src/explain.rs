@@ -68,14 +68,16 @@ pub fn explain_bytes(bytes: &[u8]) -> Vec<ExplainLine> {
         c.emit(consumed, format!("section size: {}", size));
 
         let payload_start = c.pos;
-        let payload_end = payload_start + size as usize;
-        if payload_end > bytes.len() {
-            c.emit(
-                c.remaining(),
-                format!("section payload truncated (declared {} bytes)", size),
-            );
-            break;
-        }
+        let payload_end = match payload_start.checked_add(size as usize) {
+            Some(end) if end <= bytes.len() => end,
+            _ => {
+                c.emit(
+                    c.remaining(),
+                    format!("section payload truncated (declared {} bytes)", size),
+                );
+                break;
+            }
+        };
 
         let payload = &bytes[payload_start..payload_end];
         match id {

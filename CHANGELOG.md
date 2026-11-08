@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `parse_header`: replaced `try_into().unwrap()` with direct byte indexing to eliminate hidden panics (#65, PR #76)
 - `decode_const_expr`: same unwrap removal for f32/f64 byte array construction (#65, PR #76)
+- Use `checked_add` for length/offset arithmetic in `read_name`, `read_byte_vec`, export/code section decoders and `explain` so oversized LEB128 lengths no longer overflow `usize` on 32-bit targets (#202)
 
 ## [0.1.0] - 2026-08-18
 
