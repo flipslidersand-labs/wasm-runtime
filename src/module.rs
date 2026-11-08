@@ -9,7 +9,7 @@ use crate::sections::{
     decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
     decode_element_section, decode_export_section, decode_function_section, decode_global_section,
     decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
-    decode_type_section, scan_expr, CustomSection, DataSegment, ElementInit, ElementMode,
+    decode_type_section, scan_expr, CustomSection, DataMode, DataSegment, ElementInit, ElementMode,
     ElementSegment, Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits,
     Table,
 };
@@ -183,6 +183,8 @@ pub enum ValidationError {
     },
     /// An element segment initializes a table that does not exist.
     ElementTableIndexOutOfRange { index: u32, table_space: usize },
+    /// An active data segment targets a memory that does not exist.
+    DataMemoryIndexOutOfRange { index: u32, memory_space: usize },
     /// An element segment references a function beyond the function space.
     ElementFuncIndexOutOfRange { index: u32, func_space: usize },
     /// The start section names a function beyond the function space.
@@ -226,6 +228,14 @@ impl fmt::Display for ValidationError {
                 f,
                 "element table index {} out of range (only {} tables)",
                 index, table_space
+            ),
+            ValidationError::DataMemoryIndexOutOfRange {
+                index,
+                memory_space,
+            } => write!(
+                f,
+                "data memory index {} out of range (only {} memories)",
+                index, memory_space
             ),
             ValidationError::ElementFuncIndexOutOfRange { index, func_space } => write!(
                 f,
@@ -374,6 +384,18 @@ impl Module {
                             func_space,
                         });
                     }
+                }
+            }
+        }
+
+        // 4b. active data segments must target an existing memory.
+        for segment in &self.data {
+            if let DataMode::Active { memory_index, .. } = &segment.mode {
+                if *memory_index as usize >= memory_space {
+                    return Err(ValidationError::DataMemoryIndexOutOfRange {
+                        index: *memory_index,
+                        memory_space,
+                    });
                 }
             }
         }
@@ -698,6 +720,71 @@ mod tests {
             mode: crate::sections::DataMode::Passive,
             bytes: vec![0xAA],
         }
+    }
+
+    fn active_data(memory_index: u32) -> DataSegment {
+        DataSegment {
+            mode: crate::sections::DataMode::Active {
+                memory_index,
+                offset: ConstExpr::I32(0),
+            },
+            bytes: vec![],
+        }
+    }
+
+    #[test]
+    fn data_memory_index_no_memory_is_invalid() {
+        // flag 0 data segment (implicit memory 0) with no memory defined.
+        let mut bytes = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        bytes.extend_from_slice(&[0x0B, 0x06, 0x01, 0x00, 0x41, 0x00, 0x0B, 0x00]);
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::DataMemoryIndexOutOfRange {
+                index: 0,
+                memory_space: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn data_memory_index_beyond_defined_memory() {
+        let module = Module {
+            memories: vec![Limits { min: 1, max: None }],
+            data: vec![active_data(1)],
+            ..Module::default()
+        };
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::DataMemoryIndexOutOfRange {
+                index: 1,
+                memory_space: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn data_memory_index_valid_with_defined_memory() {
+        let module = Module {
+            memories: vec![Limits { min: 1, max: None }],
+            data: vec![active_data(0)],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
+    }
+
+    #[test]
+    fn data_memory_index_counts_imported_memory() {
+        let module = Module {
+            imports: vec![Import {
+                module: "env".to_string(),
+                name: "m".to_string(),
+                desc: ImportDesc::Memory(Limits { min: 1, max: None }),
+            }],
+            data: vec![active_data(0)],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
     }
 
     #[test]

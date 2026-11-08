@@ -333,6 +333,17 @@ fn diff_different_files_reports_differences() {
 }
 
 #[test]
+fn diff_invalid_version_exits_nonzero() {
+    let path = std::env::temp_dir().join("diff_bad_version.wasm");
+    std::fs::write(&path, b"\x00asm\x02\x00\x00\x00").unwrap();
+    wasm_dump()
+        .args(["--diff", path.to_str().unwrap(), MINIMAL_WASM])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error:"));
+}
+
+#[test]
 fn diff_with_single_arg_exits_nonzero_with_usage() {
     wasm_dump()
         .args(["--diff", MINIMAL_WASM])
