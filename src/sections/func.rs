@@ -164,10 +164,8 @@ pub fn decode_code_section(payload: &[u8]) -> Result<Vec<FuncBody>, ParseError> 
         pos += n;
 
         // The body occupies exactly `size` bytes starting here.
-        let body_end = pos + size as usize;
-        if body_end > payload.len() {
-            return Err(ParseError::SizeMismatch);
-        }
+        let body_end = super::checked_end(pos, size as usize, payload.len())
+            .map_err(|_| ParseError::SizeMismatch)?;
 
         let (local_count, n) = decode_leb128_u32(payload, pos)?;
         pos += n;

@@ -76,13 +76,19 @@ fn ensure_consumed(payload: &[u8], pos: usize) -> Result<(), ParseError> {
     }
 }
 
+/// Returns `pos + len` if it does not overflow and stays within `total`.
+/// Overflow (possible when `usize` is 32 bits) is reported like a truncation.
+pub(crate) fn checked_end(pos: usize, len: usize, total: usize) -> Result<usize, ParseError> {
+    match pos.checked_add(len) {
+        Some(end) if end <= total => Ok(end),
+        _ => Err(ParseError::UnexpectedEof),
+    }
+}
+
 fn read_name(payload: &[u8], pos: &mut usize) -> Result<String, ParseError> {
     let (len, n) = decode_leb128_u32(payload, *pos)?;
-    *pos += n;
-    let end = *pos + len as usize;
-    if end > payload.len() {
-        return Err(ParseError::UnexpectedEof);
-    }
+    *pos = pos.checked_add(n).ok_or(ParseError::UnexpectedEof)?;
+    let end = checked_end(*pos, len as usize, payload.len())?;
     let s = std::str::from_utf8(&payload[*pos..end])
         .map_err(|_| ParseError::InvalidUtf8)?
         .to_string();
@@ -178,11 +184,8 @@ fn read_init_expr(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError
 
 fn read_byte_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError> {
     let (len, n) = decode_leb128_u32(payload, *pos)?;
-    *pos += n;
-    let end = *pos + len as usize;
-    if end > payload.len() {
-        return Err(ParseError::UnexpectedEof);
-    }
+    *pos = pos.checked_add(n).ok_or(ParseError::UnexpectedEof)?;
+    let end = checked_end(*pos, len as usize, payload.len())?;
     let bytes = payload[*pos..end].to_vec();
     *pos = end;
     Ok(bytes)
@@ -194,6 +197,20 @@ fn read_byte_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError>
 mod tests {
     use super::*;
     use crate::parser::ParseError;
+
+    #[test]
+    fn checked_end_rejects_overflow() {
+        assert_eq!(
+            checked_end(5, usize::MAX, 10),
+            Err(ParseError::UnexpectedEof)
+        );
+        assert_eq!(
+            checked_end(usize::MAX, 1, usize::MAX),
+            Err(ParseError::UnexpectedEof)
+        );
+        assert_eq!(checked_end(2, 3, 5), Ok(5));
+        assert_eq!(checked_end(2, 4, 5), Err(ParseError::UnexpectedEof));
+    }
 
     #[test]
     fn display_name_escapes_ambiguous_and_bidi() {

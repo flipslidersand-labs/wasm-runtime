@@ -16,7 +16,7 @@ Rust 製 WebAssembly バイナリパーサー。WebAssembly MVP バイナリフ�
 - `--wat`: WAT (WebAssembly Text format) output / WAT（WebAssembly テキスト形式）出力
 - `--timing`: parse time measurement / パース時間の計測
 - `--explain`: byte-level annotated explanation of the module / モジュールのバイト単位の注釈付き解説
-- `--diff`: structural diff between two wasm modules / 2つの wasm モジュール間の構造的差分
+- `--diff`: section-size diff between two wasm modules (contents are not compared) / 2つの wasm モジュール間のセクションサイズの差分（内容は比較しない）
 
 ## Directory structure / ディレクトリ構成
 
@@ -39,6 +39,13 @@ src/
 tests/
   cli.rs, integration.rs, error_handling.rs, error_context.rs,
   section_events.rs, snapshot_tests.rs, proptest_suite.rs
+  section_order.rs       — section order / duplicate checks
+  section_size.rs        — rejects sections whose declared size exceeds the decoded content
+  spec_conformance.rs    — official WebAssembly testsuite conformance (needs SPEC_TESTSUITE_DIR and wasm-tools; skipped otherwise)
+  spec_expected_failures.txt — pinned set of known spec failures
+  proptest_suite.proptest-regressions — saved proptest regression seeds
+  fixtures/              — sample .wasm inputs
+  snapshots/             — insta snapshots for snapshot_tests.rs
 ```
 
 ## Design decisions / 設計判断（ADR）
@@ -68,7 +75,7 @@ wasm-dump --wat path/to/file.wasm      # WAT text output / WAT テキスト出�
 wasm-dump --timing path/to/file.wasm   # parse time measurement / パース時間計測
 wasm-dump --explain path/to/file.wasm  # byte-level annotated explanation / バイト単位の注釈付き解説
 wasm-dump --max-size 1048576 path/to/file.wasm # input size limit in bytes (default 268435456 = 256 MiB) / 入力サイズ上限(バイト)
-wasm-dump --diff [--max-size <bytes>] a.wasm b.wasm # structural diff between two modules / 2モジュール間の構造的差分
+wasm-dump --diff [--max-size <bytes>] a.wasm b.wasm # section-size diff between two modules / 2モジュール間のセクションサイズ差分
 ```
 
 ### Example output / 出力例
