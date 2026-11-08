@@ -26,9 +26,14 @@ pub use types::{
 
 /// True for characters that must not reach a terminal raw: control characters
 /// (including C1, U+0080..=U+009F) and bidi controls (U+202A..=U+202E,
-/// U+2066..=U+2069).
+/// U+2066..=U+2069), bidi marks (U+200E, U+200F, U+061C) and line/paragraph
+/// separators (U+2028, U+2029).
 pub(crate) fn is_unsafe_char(c: char) -> bool {
-    c.is_control() || matches!(c as u32, 0x202A..=0x202E | 0x2066..=0x2069)
+    c.is_control()
+        || matches!(
+            c as u32,
+            0x061C | 0x200E | 0x200F | 0x2028 | 0x2029 | 0x202A..=0x202E | 0x2066..=0x2069
+        )
 }
 
 /// Escapes `\`, `"` and unsafe characters (see `is_unsafe_char`) so that an
