@@ -59,23 +59,45 @@ fn events_and_context_together_on_payload_error() {
 }
 
 #[test]
-fn section_iter_error_has_no_location_and_fires_no_events() {
+fn section_iter_error_has_location_and_fires_no_events() {
     // Section id 1 whose size LEB128 has the continuation bit set but is cut
-    // off: the section header itself is malformed.
+    // off: the section header itself is malformed. The location is that of
+    // the section's id byte (offset 8, right after the module header).
     let mut bytes = header();
     bytes.extend_from_slice(&[0x01, 0x80]);
 
     let mut events: Vec<SectionEvent> = Vec::new();
     let err = parse_module_with_options(&bytes, ParseOptions::new().on_section(|e| events.push(e)))
         .unwrap_err();
-    assert_eq!(err.offset, None);
-    assert_eq!(err.section_id, None);
+    assert_eq!(err.offset, Some(8));
+    assert_eq!(err.section_id, Some(1));
     assert!(events.is_empty());
 
     let expected = parse_module_with_context(&bytes).unwrap_err();
     assert_eq!(err.error, expected.error);
     assert_eq!(err.offset, expected.offset);
     assert_eq!(err.section_id, expected.section_id);
+}
+
+#[test]
+fn section_out_of_order_error_has_location() {
+    // type section (id 1, empty) then a second type section: out of order.
+    let bytes = make_wasm(&[(1, &[0x00]), (1, &[0x00])]);
+    let err = parse_module_with_context(&bytes).unwrap_err();
+    assert_eq!(err.error, ParseError::SectionOutOfOrder(1));
+    // header 8 + first section (id, size, 1 payload byte) = 11
+    assert_eq!(err.offset, Some(11));
+    assert_eq!(err.section_id, Some(1));
+}
+
+#[test]
+fn section_size_exceeds_input_error_has_location() {
+    let mut bytes = header();
+    bytes.extend_from_slice(&[0x0A, 0x05, 0x00]);
+    let err = parse_module_with_context(&bytes).unwrap_err();
+    assert_eq!(err.error, ParseError::UnexpectedEof);
+    assert_eq!(err.offset, Some(8));
+    assert_eq!(err.section_id, Some(10));
 }
 
 #[test]
