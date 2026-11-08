@@ -446,4 +446,12 @@ mod tests {
         );
         assert_eq!(wat_string("a\\nb\""), "a\\\\nb\\\"");
     }
+
+    #[test]
+    fn wat_string_escapes_bidi_marks_and_line_separators() {
+        assert_eq!(
+            wat_string("\u{200e}\u{200f}\u{61c}\u{2028}\u{2029}"),
+            "\\u{200e}\\u{200f}\\u{61c}\\u{2028}\\u{2029}"
+        );
+    }
 }
