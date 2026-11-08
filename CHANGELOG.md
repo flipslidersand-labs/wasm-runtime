@@ -35,13 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `parse_module_with_options` and `ParseOptions`: a single entry point that combines the section-event hook with `ParseErrorContext` errors; `parse_module`, `parse_module_with_events` and `parse_module_with_context` are unchanged thin wrappers (#196, PR #213)
 
 ### Changed
-- Element exprs must now be a single const instruction followed by `end` (extra instructions give `UnsupportedInitExpr`), and init_expr LEB128 immediates longer than 5 bytes (10 for `i64.const`) give `Leb128Overflow` (#201)
 - `ValidationError` is now `#[non_exhaustive]`: downstream `match` needs a wildcard arm (#191)
 - **Breaking:** `ParseError` is not `#[non_exhaustive]`, so the variants added in this release (`SectionOutOfOrder` in PR #155, `UnknownOpcode` / `MissingEnd` / `TooManyLocals` in PR #160, `UnsupportedDataFlagWide` / `UnsupportedElementFlagWide` in #201, PR #216) break exhaustive downstream `match` expressions
 - **Breaking:** function bodies containing opcodes outside the supported set (MVP, sign-extension, basic reference types, `0xFC` prefix; e.g. SIMD, threads, exception handling, tail call) are now rejected at parse time with `UnknownOpcode` instead of being accepted unread (PR #160)
 - **Breaking:** a section whose declared size is larger than its decoded content is now rejected with `SizeMismatch`, whose message is generalized to "declared size does not match payload" (PR #156)
 - **Breaking:** `DiffStatus::Equal` is now `Equal { size: u32 }` instead of a unit variant; `Display` prints the actual byte count instead of `(0 bytes)` (#64, PR #84)
 - **Breaking:** `decode_name_section` now rejects a module-name or function-names subsection with trailing bytes (`SizeMismatch`) and a repeated subsection id (`SectionOutOfOrder`), both previously accepted (#201)
+- **Breaking:** element exprs are now validated as a single const instruction followed by `end`. Newly rejected, previously accepted: element exprs of flag 4-7 segments containing more than one instruction (`UnsupportedInitExpr`), over-long LEB128 immediates inside element exprs, and `ref.func` indices outside the u32 range (both `Leb128Overflow`). Over-long LEB128 in global/data/offset init exprs was already rejected; only the error for truncated input changes, from `UnexpectedEof` to `Leb128Overflow` (#201)
 - **Breaking:** modules with out-of-order or duplicated non-custom sections, previously accepted, are now rejected with `SectionOutOfOrder` (PR #155)
 - **Breaking:** init expressions are unified to the typed `ConstExpr`: `Global.init_expr: Vec<u8>` becomes `Global.init`, and `offset_expr` of active data/element segments becomes `offset` (#70, PR #96)
 - Names printed by `wasm-dump` and `Display` impls now escape control characters, `\`, `"`, C1 controls, and bidi/line-separator characters as `\u{..}` (PR #181, #188, #197)
