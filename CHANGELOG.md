@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `ValidationError::DuplicateExportName`: `Module::validate()` rejects modules with two exports of the same name, across all export kinds (#221)
 - `wasm-dump --diff` binary section diff comparison (#44, PR #55)
 - `wasm-dump --wat` WAT text format output (#43, PR #54)
 - `wasm-dump --stats` module statistics report (#45, PR #50)

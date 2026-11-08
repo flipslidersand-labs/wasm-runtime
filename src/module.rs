@@ -295,6 +295,8 @@ pub enum ValidationError {
     },
     /// A memory declares `min` or `max` above the 65536-page (4 GiB) limit.
     MemoryLimitExceeded { field: &'static str, value: u32 },
+    /// Two exports share the same name (export names are unique across all kinds).
+    DuplicateExportName { name: String },
 }
 
 /// Maximum memory size in 64 KiB pages (4 GiB) for 32-bit memories.
@@ -374,6 +376,11 @@ impl fmt::Display for ValidationError {
                 f,
                 "memory size {} {} must not exceed {} pages",
                 field, value, MAX_MEMORY_PAGES
+            ),
+            ValidationError::DuplicateExportName { name } => write!(
+                f,
+                "duplicate export name \"{}\"",
+                crate::sections::display_name(name)
             ),
         }
     }
@@ -480,6 +487,7 @@ impl Module {
         let memory_space = counts.memories + self.memories.len();
         let global_space = counts.globals + self.globals.len();
 
+        let mut seen_exports = std::collections::HashSet::new();
         for export in &self.exports {
             let space = match export.kind {
                 ExportKind::Func => func_space,
@@ -493,6 +501,11 @@ impl Module {
                     kind: export.kind,
                     index: export.index,
                     space,
+                });
+            }
+            if !seen_exports.insert(export.name.as_str()) {
+                return Err(ValidationError::DuplicateExportName {
+                    name: export.name.clone(),
                 });
             }
         }
@@ -698,6 +711,60 @@ mod tests {
                 space: 1,
             })
         );
+    }
+
+    fn dup_export_module(exports: Vec<(&str, ExportKind)>) -> Module {
+        Module {
+            types: vec![func_type()],
+            functions: vec![0],
+            code: vec![empty_body()],
+            memories: vec![Limits { min: 1, max: None }],
+            exports: exports
+                .into_iter()
+                .map(|(n, kind)| Export {
+                    name: n.to_string(),
+                    kind,
+                    index: 0,
+                })
+                .collect(),
+            ..Module::default()
+        }
+    }
+
+    #[test]
+    fn duplicate_export_name_rejected() {
+        let module = dup_export_module(vec![("a", ExportKind::Func), ("a", ExportKind::Func)]);
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::DuplicateExportName {
+                name: "a".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn duplicate_export_name_across_kinds_rejected() {
+        let module = dup_export_module(vec![("a", ExportKind::Func), ("a", ExportKind::Memory)]);
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::DuplicateExportName {
+                name: "a".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn distinct_export_names_ok() {
+        let module = dup_export_module(vec![("a", ExportKind::Func), ("b", ExportKind::Memory)]);
+        assert_eq!(module.validate(), Ok(()));
+    }
+
+    #[test]
+    fn duplicate_export_name_display_is_escaped() {
+        let e = ValidationError::DuplicateExportName {
+            name: "a\n\"".to_string(),
+        };
+        assert_eq!(e.to_string(), "duplicate export name \"a\\u{a}\\\"\"");
     }
 
     #[test]
