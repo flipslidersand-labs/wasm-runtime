@@ -111,13 +111,15 @@ The failure set is pinned in `tests/spec_expected_failures.txt`; the test fails 
 
 ## CI pin update / CI の reusable workflow の固定SHAを更新する
 
+`qa-workflows` has no tags, so dependabot cannot bump it; the SHA pins in `.github/workflows/ci.yml` are updated by hand.
+
 `qa-workflows` はタグが無く dependabot が更新できないため、`.github/workflows/ci.yml` の SHA 固定は手動で更新する。
 
 1. 現在の固定SHA: `grep -n 'qa-workflows' .github/workflows/ci.yml`
 2. 固定SHAが upstream main 上にあるか・遅れ: `gh api repos/flipslidersand-labs/qa-workflows/compare/<固定SHA>...main --jq '[.status,.ahead_by]'`
-   - `.status` が `identical`(最新)か `ahead`(main が先行、固定SHAは main の祖先)なら main 上。`diverged` / `behind` なら main 上にない。
-   - `.ahead_by` は main が固定SHAより何コミット先行しているか(遅れ)。0 なら最新。
-3. 更新する場合は qa-workflows の main の HEAD SHA を取り、ci.yml の2か所(`rust-test.yml` と `reviewdog-rust.yml`)を同じ値に揃え、行末コメントの日付も直して PR を出す。
+   - `.status` が `identical`(最新)か `ahead`(main が先行、固定SHAは main の祖先)なら main 上。`diverged` / `behind` なら main 上にない。固定SHAが存在せず 404 になる場合も main 上にない扱い。
+   - `.ahead_by` は `ahead` のときだけ意味を持ち(main が固定SHAより何コミット先行か=遅れ。0 なら最新)、`diverged` では遅れの数として使えない。
+3. 更新する場合は main の HEAD SHA(`gh api repos/flipslidersand-labs/qa-workflows/commits/main --jq .sha`)を取り、ci.yml の2か所(`rust-test.yml` と `reviewdog-rust.yml`)を同じ値に揃え、行末コメントの日付も直して PR を出す。
 
 ## License
 
