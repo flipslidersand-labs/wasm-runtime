@@ -39,6 +39,13 @@ src/
 tests/
   cli.rs, integration.rs, error_handling.rs, error_context.rs,
   section_events.rs, snapshot_tests.rs, proptest_suite.rs
+  section_order.rs       — section order / duplicate checks
+  section_size.rs        — rejects sections whose declared size exceeds the decoded content
+  spec_conformance.rs    — official WebAssembly testsuite conformance (needs SPEC_TESTSUITE_DIR and wasm-tools; skipped otherwise)
+  spec_expected_failures.txt — pinned set of known spec failures
+  proptest_suite.proptest-regressions — saved proptest regression seeds
+  fixtures/              — sample .wasm inputs
+  snapshots/             — insta snapshots for snapshot_tests.rs
 ```
 
 ## Design decisions / 設計判断（ADR）
