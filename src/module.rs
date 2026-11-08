@@ -169,6 +169,7 @@ pub fn parse_module(bytes: &[u8]) -> Result<Module, ParseError> {
 /// covers malformed bytes; a `ValidationError` means the bytes decoded fine but
 /// the module is internally inconsistent.
 #[derive(Debug, PartialEq, Clone)]
+#[non_exhaustive]
 pub enum ValidationError {
     /// The function section and code section disagree on the function count.
     FuncCodeCountMismatch { functions: usize, code: usize },
@@ -205,6 +206,13 @@ pub enum ValidationError {
 
 /// Maximum memory size in 64 KiB pages (4 GiB) for 32-bit memories.
 const MAX_MEMORY_PAGES: u32 = 65536;
+
+/// Which kind of limits is being checked (avoids string-compare dispatch).
+#[derive(Clone, Copy, PartialEq)]
+enum LimitsKind {
+    Table,
+    Memory,
+}
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -333,17 +341,17 @@ impl Module {
 
         // 2c. limits of imported and locally-defined tables/memories need min <= max.
         let imported_limits = self.imports.iter().filter_map(|i| match &i.desc {
-            ImportDesc::Table { limits, .. } => Some(("table", limits)),
-            ImportDesc::Memory(limits) => Some(("memory", limits)),
+            ImportDesc::Table { limits, .. } => Some((LimitsKind::Table, limits)),
+            ImportDesc::Memory(limits) => Some((LimitsKind::Memory, limits)),
             _ => None,
         });
         let local_limits = self
             .tables
             .iter()
-            .map(|t| ("table", &t.limits))
-            .chain(self.memories.iter().map(|m| ("memory", m)));
+            .map(|t| (LimitsKind::Table, &t.limits))
+            .chain(self.memories.iter().map(|m| (LimitsKind::Memory, m)));
         for (kind, limits) in imported_limits.chain(local_limits) {
-            if kind == "memory" {
+            if kind == LimitsKind::Memory {
                 if limits.min > MAX_MEMORY_PAGES {
                     return Err(ValidationError::MemoryLimitExceeded {
                         field: "minimum",
@@ -362,7 +370,10 @@ impl Module {
             if let Some(max) = limits.max {
                 if limits.min > max {
                     return Err(ValidationError::LimitsMinGreaterThanMax {
-                        kind,
+                        kind: match kind {
+                            LimitsKind::Table => "table",
+                            LimitsKind::Memory => "memory",
+                        },
                         min: limits.min,
                         max,
                     });
@@ -1112,6 +1123,19 @@ mod tests {
             m.validate(),
             Err(ValidationError::MemoryLimitExceeded {
                 field: "maximum",
+                value: 65537
+            })
+        );
+    }
+
+    /// Pins the check order: the 65536-page range check runs before the
+    /// min > max check, so min=65537,max=1 reports MemoryLimitExceeded.
+    #[test]
+    fn memory_limit_exceeded_reported_before_min_greater_than_max() {
+        assert_eq!(
+            mem_module(65537, Some(1)).validate(),
+            Err(ValidationError::MemoryLimitExceeded {
+                field: "minimum",
                 value: 65537
             })
         );
