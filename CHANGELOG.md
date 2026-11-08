@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Memory limits validation: `min`/`max` above 65536 pages is rejected with `ValidationError::MemoryLimitExceeded` (#185, PR #189)
 - `wasm-dump --explain` byte-level annotation of the binary (#61, PR #89)
 - `wasm-dump --max-size <bytes>` input size limit, default 256 MiB (268435456 bytes); oversized input exits 1, also applies to both `--diff` inputs (PR #182)
+- `wasm_runtime::prelude` module re-exporting the common types and parse functions (#73, PR #83)
+- `wasm-dump` flags can be combined and given in any order (`--verbose --validate --stats`, etc.); unknown flags now print `error: unknown flag: --foo` (#72, PR #87)
 - `ParseErrorContext` (byte offset and section id) and `parse_module_with_context()` (#60, PR #85)
 - `parse_module_with_events()` with `SectionEvent` callback (#62, PR #95)
 - Function bodies are scanned as instruction sequences; malformed bodies are rejected with `ParseError::{UnknownOpcode, MissingEnd, TooManyLocals}`, and `memory.init` / `data.drop` without a datacount section is rejected by `Module::validate()` with `ValidationError::DataCountRequired` (PR #160)
@@ -35,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `ParseError` is not `#[non_exhaustive]`, so the variants added in this release (`SectionOutOfOrder` in PR #155, `UnknownOpcode` / `MissingEnd` / `TooManyLocals` in PR #160) break exhaustive downstream `match` expressions
 - **Breaking:** function bodies containing opcodes outside the supported set (MVP, sign-extension, basic reference types, `0xFC` prefix; e.g. SIMD, threads, exception handling, tail call) are now rejected at parse time with `UnknownOpcode` instead of being accepted unread (PR #160)
 - **Breaking:** a section whose declared size is larger than its decoded content is now rejected with `SizeMismatch`, whose message is generalized to "declared size does not match payload" (PR #156)
+- **Breaking:** `DiffStatus::Equal` is now `Equal { size: u32 }` instead of a unit variant; `Display` prints the actual byte count instead of `(0 bytes)` (#64, PR #84)
+- **Breaking:** modules with out-of-order or duplicated non-custom sections, previously accepted, are now rejected with `SectionOutOfOrder` (PR #155)
 - **Breaking:** init expressions are unified to the typed `ConstExpr`: `Global.init_expr: Vec<u8>` becomes `Global.init`, and `offset_expr` of active data/element segments becomes `offset` (#70, PR #96)
 - Names printed by `wasm-dump` and `Display` impls now escape control characters, `\`, `"`, C1 controls, and bidi/line-separator characters as `\u{..}` (PR #181, #188, #197)
 - `wasm-dump` exits 1 and reports `(decode error: ..)` when a section fails to decode; `--explain` keeps exit 0 (PR #175)
