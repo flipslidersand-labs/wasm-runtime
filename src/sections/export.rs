@@ -43,7 +43,13 @@ pub struct Export {
 
 impl fmt::Display for Export {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "\"{}\"  {}({})", self.name, self.kind, self.index)
+        write!(
+            f,
+            "\"{}\"  {}({})",
+            super::display_name(&self.name),
+            self.kind,
+            self.index
+        )
     }
 }
 

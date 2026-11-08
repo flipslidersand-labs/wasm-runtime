@@ -222,7 +222,10 @@ impl fmt::Display for ValidationError {
             } => write!(
                 f,
                 "export \"{}\" ({}) index {} out of range (space size {})",
-                name, kind, index, space
+                crate::sections::display_name(name),
+                kind,
+                index,
+                space
             ),
             ValidationError::ElementTableIndexOutOfRange { index, table_space } => write!(
                 f,
