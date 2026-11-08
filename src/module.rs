@@ -1609,6 +1609,8 @@ mod tests {
 
     #[test]
     fn global_init_self_reference_uses_own_type() {
+        // Currently undetected: a self-reference is invalid per spec, but only the
+        // type is looked up here. Tracked in a separate issue.
         assert_eq!(one_global(ValType::I32, ConstExpr::GlobalGet(0)), Ok(()));
         assert_eq!(one_global(ValType::I64, ConstExpr::GlobalGet(0)), Ok(()));
     }
@@ -1620,5 +1622,31 @@ mod tests {
             ..Module::default()
         };
         assert_eq!(module.validate(), global_get_err(5, 1));
+    }
+
+    #[test]
+    fn global_init_get_type_with_mixed_imports() {
+        // func + memory + i32 global imports: func/memory must not shift the global space.
+        let func_import = Import {
+            module: "env".to_string(),
+            name: "f".to_string(),
+            desc: ImportDesc::Func(0),
+        };
+        let mem_import = Import {
+            module: "env".to_string(),
+            name: "m".to_string(),
+            desc: ImportDesc::Memory(Limits { min: 1, max: None }),
+        };
+        let mk = |t| Module {
+            types: vec![func_type()],
+            imports: vec![func_import.clone(), mem_import.clone(), imported_global()],
+            globals: vec![typed_global(t, ConstExpr::GlobalGet(0))],
+            ..Module::default()
+        };
+        assert_eq!(mk(ValType::I32).validate(), Ok(()));
+        assert_eq!(
+            mk(ValType::F32).validate(),
+            mismatch(ValType::F32, ValType::I32)
+        );
     }
 }
