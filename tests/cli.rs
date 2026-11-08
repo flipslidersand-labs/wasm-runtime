@@ -277,6 +277,67 @@ fn explain_flag_shows_section_ids() {
         .stdout(predicate::str::contains("section id:"));
 }
 
+// ── --explain-max-lines (#212) ───────────────────────────
+
+#[test]
+fn explain_max_lines_small_limit_truncates() {
+    wasm_dump()
+        .args(["--explain", "--explain-max-lines", "2", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "output truncated: line limit (2) reached",
+        ));
+}
+
+#[test]
+fn explain_max_lines_zero_is_unlimited() {
+    wasm_dump()
+        .args(["--explain", "--explain-max-lines", "0", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("section id:"))
+        .stdout(predicate::str::contains("output truncated").not());
+}
+
+#[test]
+fn explain_default_limit_does_not_truncate_small_module() {
+    wasm_dump()
+        .args(["--explain", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("output truncated").not());
+}
+
+#[test]
+fn explain_max_lines_invalid_value_exits_one() {
+    wasm_dump()
+        .args(["--explain", "--explain-max-lines", "abc", MINIMAL_WASM])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("--explain-max-lines"));
+}
+
+#[test]
+fn explain_max_lines_missing_value_exits_one() {
+    wasm_dump()
+        .args(["--explain-max-lines"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("--explain-max-lines"));
+}
+
+#[test]
+fn explain_max_lines_without_explain_is_harmless() {
+    wasm_dump()
+        .args(["--explain-max-lines", "5", MINIMAL_WASM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("explain:").not());
+}
+
 // ── 異常系 ───────────────────────────────────────────────
 
 #[test]
