@@ -6,6 +6,25 @@
 use crate::module::Module;
 use crate::sections::{ExportKind, ImportDesc, ValType};
 
+/// Escapes a name for embedding inside a WAT string literal.
+fn wat_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7F => {
+                out.push_str(&format!("\\u{{{:02x}}}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Converts a decoded module to a WAT string.
 pub fn module_to_wat(module: &Module) -> String {
     let mut out = String::from("(module\n");
@@ -53,7 +72,9 @@ pub fn module_to_wat(module: &Module) -> String {
         };
         out.push_str(&format!(
             "  (import \"{}\" \"{}\" {})\n",
-            imp.module, imp.name, desc
+            wat_string(&imp.module),
+            wat_string(&imp.name),
+            desc
         ));
     }
 
@@ -98,7 +119,9 @@ pub fn module_to_wat(module: &Module) -> String {
         };
         out.push_str(&format!(
             "  (export \"{}\" ({} {}))\n",
-            exp.name, kind, exp.index
+            wat_string(&exp.name),
+            kind,
+            exp.index
         ));
     }
 
@@ -384,5 +407,37 @@ mod tests {
         let wat = module_to_wat(&module);
         assert!(wat.contains("(data (memory 0) (offset 16) \"<3 bytes>\")"));
         assert!(wat.contains("  (data \"<2 bytes>\")"));
+    }
+
+    #[test]
+    fn export_name_is_escaped() {
+        let mut b = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        b.extend_from_slice(&[0x01, 0x04, 0x01, 0x60, 0x00, 0x00]);
+        b.extend_from_slice(&[0x03, 0x02, 0x01, 0x00]);
+        b.extend_from_slice(&[
+            0x07, 0x0A, 0x01, 0x06, b'a', b'"', b'b', b'\\', b'c', b'\n', 0x00, 0x00,
+        ]);
+        b.extend_from_slice(&[0x0A, 0x04, 0x01, 0x02, 0x00, 0x0B]);
+        let wat = module_to_wat(&parse_module(&b).unwrap());
+        assert!(wat.contains(r#"(export "a\"b\\c\n" (func 0))"#), "{wat}");
+    }
+
+    #[test]
+    fn import_names_are_escaped() {
+        let mut b = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        b.extend_from_slice(&[0x01, 0x04, 0x01, 0x60, 0x00, 0x00]);
+        // import "m\"" "\t\r" func type 0
+        b.extend_from_slice(&[
+            0x02, 0x09, 0x01, 0x02, b'm', b'"', 0x02, b'\t', b'\r', 0x00, 0x00,
+        ]);
+        let wat = module_to_wat(&parse_module(&b).unwrap());
+        assert!(wat.contains(r#"(import "m\"" "\t\r" "#), "{wat}");
+    }
+
+    #[test]
+    fn wat_string_escapes_control_chars() {
+        assert_eq!(wat_string("plain"), "plain");
+        assert_eq!(wat_string("\u{0}\u{1f}\u{7f}"), "\\u{00}\\u{1f}\\u{7f}");
+        assert_eq!(wat_string("é"), "é");
     }
 }
