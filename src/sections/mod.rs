@@ -1272,6 +1272,16 @@ mod tests {
     }
 
     #[test]
+    fn data_section_wide_flag_0x180_not_truncated() {
+        // flag = LEB128 80 03 = 0x180; must not be truncated to 0x80
+        let payload = [0x01, 0x80, 0x03];
+        assert_eq!(
+            decode_data_section(&payload),
+            Err(ParseError::UnsupportedDataFlagWide(0x180))
+        );
+    }
+
+    #[test]
     fn data_section_flag_0xff_stays_u8_variant() {
         // flag = LEB128 FF 01 = 0xFF, the largest value the u8 variant holds
         let payload = [0x01, 0xFF, 0x01];
@@ -1498,6 +1508,16 @@ mod tests {
         assert_eq!(
             decode_element_section(&payload),
             Err(ParseError::UnsupportedElementFlagWide(0x100))
+        );
+    }
+
+    #[test]
+    fn element_section_wide_flag_0x180_not_truncated() {
+        // flag = LEB128 80 03 = 0x180; must not be truncated to 0x80
+        let payload = [0x01, 0x80, 0x03];
+        assert_eq!(
+            decode_element_section(&payload),
+            Err(ParseError::UnsupportedElementFlagWide(0x180))
         );
     }
 

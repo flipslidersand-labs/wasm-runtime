@@ -445,15 +445,7 @@ fn parse_module_empty_bytes_returns_eof() {
 #[test]
 fn display_unsupported_wide_flags() {
     let msg = format!("{}", ParseError::UnsupportedDataFlagWide(0x100));
-    assert!(
-        msg.contains("data") && msg.contains("0x100"),
-        "got: {}",
-        msg
-    );
+    assert_eq!(msg, "unsupported data segment flag: 0x100");
     let msg = format!("{}", ParseError::UnsupportedElementFlagWide(0x100));
-    assert!(
-        msg.contains("element") && msg.contains("0x100"),
-        "got: {}",
-        msg
-    );
+    assert_eq!(msg, "unsupported element segment flag: 0x100");
 }

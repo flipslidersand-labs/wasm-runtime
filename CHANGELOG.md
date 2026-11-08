@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `ValidationError` is now `#[non_exhaustive]`: downstream `match` needs a wildcard arm (#191)
-- **Breaking:** `ParseError` is not `#[non_exhaustive]`, so the variants added in this release (`SectionOutOfOrder` in PR #155, `UnknownOpcode` / `MissingEnd` / `TooManyLocals` in PR #160) break exhaustive downstream `match` expressions
+- **Breaking:** `ParseError` is not `#[non_exhaustive]`, so the variants added in this release (`SectionOutOfOrder` in PR #155, `UnknownOpcode` / `MissingEnd` / `TooManyLocals` in PR #160, `UnsupportedDataFlagWide` / `UnsupportedElementFlagWide` in #201, PR #216) break exhaustive downstream `match` expressions
 - **Breaking:** function bodies containing opcodes outside the supported set (MVP, sign-extension, basic reference types, `0xFC` prefix; e.g. SIMD, threads, exception handling, tail call) are now rejected at parse time with `UnknownOpcode` instead of being accepted unread (PR #160)
 - **Breaking:** a section whose declared size is larger than its decoded content is now rejected with `SizeMismatch`, whose message is generalized to "declared size does not match payload" (PR #156)
 - **Breaking:** `DiffStatus::Equal` is now `Equal { size: u32 }` instead of a unit variant; `Display` prints the actual byte count instead of `(0 bytes)` (#64, PR #84)
@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `parse_header`: replaced `try_into().unwrap()` with direct byte indexing to eliminate hidden panics (#65, PR #76)
 - `decode_const_expr`: same unwrap removal for f32/f64 byte array construction (#65, PR #76)
 - Use `checked_add` for length/offset arithmetic in `read_name`, `read_byte_vec`, export/code section decoders and `explain` so oversized LEB128 lengths no longer overflow `usize` on 32-bit targets (#202)
+- Element/data segment flags above `0xFF` are reported with their real value (`UnsupportedElementFlagWide` / `UnsupportedDataFlagWide`) instead of being truncated to the low 8 bits (#201, PR #216)
 - `section_iter` validates the declared section size against the remaining bytes, returning `UnexpectedEof` instead of panicking on truncated input (#111, PR #126)
 - Section decoders clamp LEB128 `count` allocation by payload length, so a huge count with a tiny payload no longer over-allocates (#119, PR #136)
 - `decode_leb128_signed` rejects non-sign-extended unused bits in the final byte with `Leb128Overflow` (PR #171)
