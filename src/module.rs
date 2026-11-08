@@ -1452,6 +1452,24 @@ mod tests {
     }
 
     #[test]
+    fn global_space_ignores_func_imports() {
+        // 2 func imports + 1 global import + 1 defined global => global space 2.
+        let func_import = |n: &str| Import {
+            module: "env".to_string(),
+            name: n.to_string(),
+            desc: ImportDesc::Func(0),
+        };
+        let mk = |i| Module {
+            types: vec![func_type()],
+            imports: vec![func_import("f"), func_import("g"), imported_global()],
+            globals: vec![global_with_init(ConstExpr::GlobalGet(i))],
+            ..Module::default()
+        };
+        assert_eq!(mk(1).validate(), Ok(()));
+        assert_eq!(mk(2).validate(), global_get_err(2, 2));
+    }
+
+    #[test]
     fn global_get_check_runs_after_existing_checks() {
         // both a bad global.get and a bad start index: the start error wins.
         let module = Module {
