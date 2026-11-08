@@ -185,9 +185,20 @@ fn decode_leb128_signed(
             return Err(ParseError::Leb128Overflow);
         }
         result |= ((byte & 0x7F) as u64) << shift;
+        let prev_shift = shift;
         shift += 7;
 
         if byte & 0x80 == 0 {
+            if shift > bits {
+                // Final byte straddles the target width: payload bits above the
+                // width must all equal the sign bit (bit `bits - prev_shift - 1`).
+                let sign_pos = bits - prev_shift - 1;
+                let high = ((byte & 0x7F) >> sign_pos) as u32;
+                let width = 7 - sign_pos;
+                if high != 0 && high != (1u32 << width) - 1 {
+                    return Err(ParseError::Leb128Overflow);
+                }
+            }
             // Sign-extend when the sign bit (0x40) of the final byte is set.
             if shift < 64 && (byte & 0x40) != 0 {
                 result |= u64::MAX << shift;
@@ -425,6 +436,42 @@ mod tests {
             decode_leb128_i32(&bytes, 0),
             Err(ParseError::Leb128Overflow)
         );
+    }
+
+    #[test]
+    fn leb128_signed_rejects_mismatched_unused_bits() {
+        assert_eq!(
+            decode_leb128_i32(&[0xFF, 0xFF, 0xFF, 0xFF, 0x0F], 0),
+            Err(ParseError::Leb128Overflow)
+        );
+        assert_eq!(
+            decode_leb128_i32(&[0x80, 0x80, 0x80, 0x80, 0x70], 0),
+            Err(ParseError::Leb128Overflow)
+        );
+        let mut neg = [0xFF; 10];
+        neg[9] = 0x01;
+        assert_eq!(decode_leb128_i64(&neg, 0), Err(ParseError::Leb128Overflow));
+        let mut pos = [0x80; 10];
+        pos[9] = 0x7E;
+        assert_eq!(decode_leb128_i64(&pos, 0), Err(ParseError::Leb128Overflow));
+    }
+
+    #[test]
+    fn leb128_signed_accepts_boundary_values() {
+        assert_eq!(
+            decode_leb128_i32(&[0x80, 0x80, 0x80, 0x80, 0x78], 0),
+            Ok((i32::MIN, 5))
+        );
+        assert_eq!(
+            decode_leb128_i32(&[0xFF, 0xFF, 0xFF, 0xFF, 0x07], 0),
+            Ok((i32::MAX, 5))
+        );
+        let mut min = [0x80; 10];
+        min[9] = 0x7F;
+        assert_eq!(decode_leb128_i64(&min, 0), Ok((i64::MIN, 10)));
+        let mut max = [0xFF; 10];
+        max[9] = 0x00;
+        assert_eq!(decode_leb128_i64(&max, 0), Ok((i64::MAX, 10)));
     }
 
     #[test]
