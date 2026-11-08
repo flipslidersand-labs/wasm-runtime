@@ -74,6 +74,7 @@ wasm-dump --stats path/to/file.wasm    # summary statistics / サマリー統計
 wasm-dump --wat path/to/file.wasm      # WAT text output / WAT テキスト出力
 wasm-dump --timing path/to/file.wasm   # parse time measurement / パース時間計測
 wasm-dump --explain path/to/file.wasm  # byte-level annotated explanation / バイト単位の注釈付き解説
+wasm-dump --explain --explain-max-lines 500000 path/to/file.wasm # explain line cap (default 100000, 0 = unlimited; may use a lot of memory on large inputs) / --explain の行数上限(既定 100000、0 で無制限。大きな入力ではメモリを大量に消費)
 wasm-dump --max-size 1048576 path/to/file.wasm # input size limit in bytes (default 268435456 = 256 MiB) / 入力サイズ上限(バイト)
 wasm-dump --diff [--max-size <bytes>] a.wasm b.wasm # section-size diff between two modules / 2モジュール間のセクションサイズ差分
 ```

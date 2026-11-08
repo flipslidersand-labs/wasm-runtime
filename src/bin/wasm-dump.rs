@@ -3,7 +3,7 @@ use std::process;
 use std::time::Instant;
 use wasm_runtime::{
     diff::{diff_modules, diff_summary},
-    explain::explain_bytes,
+    explain::{explain_bytes_with_limit, MAX_EXPLAIN_LINES},
     module::{parse_module, section_name},
     parser::{parse_header, section_iter, ParseError},
     sections::{
@@ -24,6 +24,8 @@ struct Flags {
     timing: bool,
     explain: bool,
     max_size: u64,
+    /// Line cap for `--explain`; 0 on the command line means unlimited (stored as `usize::MAX`).
+    explain_max_lines: usize,
 }
 
 /// Default input size limit: 256 MiB.
@@ -37,11 +39,31 @@ fn parse_max_size(v: Option<&String>) -> Result<u64, String> {
     }
 }
 
+fn parse_explain_max_lines(v: Option<&String>) -> Result<usize, String> {
+    let s = v.ok_or_else(|| {
+        "--explain-max-lines requires a line count (non-negative integer, 0 = unlimited)"
+            .to_string()
+    })?;
+    match s.parse::<usize>() {
+        Ok(0) => Ok(usize::MAX),
+        Ok(n) => Ok(n),
+        Err(e) if *e.kind() == std::num::IntErrorKind::PosOverflow => Err(format!(
+            "--explain-max-lines value is out of range (max {})",
+            usize::MAX
+        )),
+        Err(_) => Err(
+            "--explain-max-lines requires a line count (non-negative integer, 0 = unlimited)"
+                .to_string(),
+        ),
+    }
+}
+
 fn print_usage() {
     eprintln!(
-        "Usage: wasm-dump [--verbose|-v] [--validate] [--stats] [--timing] [--wat] [--explain] [--max-size <bytes>] <file.wasm>"
+        "Usage: wasm-dump [--verbose|-v] [--validate] [--stats] [--timing] [--wat] [--explain] [--explain-max-lines <N>] [--max-size <bytes>] <file.wasm>"
     );
     eprintln!("       wasm-dump --diff [--max-size <bytes>] <a.wasm> <b.wasm>");
+    eprintln!("  --explain-max-lines <N>: line cap for --explain (default 100000; 0 = unlimited, may use lots of memory)");
 }
 
 /// Read a file, refusing inputs larger than `max` bytes.
@@ -75,6 +97,7 @@ fn parse_flags(args: &[String]) -> Result<(Flags, String), String> {
         timing: false,
         explain: false,
         max_size: DEFAULT_MAX_SIZE,
+        explain_max_lines: MAX_EXPLAIN_LINES,
     };
     let mut path: Option<String> = None;
 
@@ -87,6 +110,10 @@ fn parse_flags(args: &[String]) -> Result<(Flags, String), String> {
             "--wat" => flags.wat = true,
             "--timing" => flags.timing = true,
             "--explain" => flags.explain = true,
+            "--explain-max-lines" => {
+                i += 1;
+                flags.explain_max_lines = parse_explain_max_lines(args.get(i))?;
+            }
             "--max-size" => {
                 i += 1;
                 flags.max_size = parse_max_size(args.get(i))?;
@@ -344,7 +371,7 @@ fn main() {
 
     if flags.explain {
         println!("\nexplain:");
-        for line in explain_bytes(&bytes) {
+        for line in explain_bytes_with_limit(&bytes, flags.explain_max_lines) {
             println!("{}", line);
         }
     }
