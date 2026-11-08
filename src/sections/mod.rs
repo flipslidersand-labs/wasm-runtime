@@ -57,13 +57,25 @@ pub fn display_name(s: &str) -> String {
 // ── Shared internal helpers ───────────────────────────────────────────────────
 // These are accessible to all submodules via `super::xxx`.
 
-/// Upper-bounds a pre-allocation by the remaining payload size.
+/// Maximum number of bytes pre-allocated up front for a decoded vector.
+/// `Vec` still grows on demand past this, driven by bytes actually decoded.
+const MAX_PREALLOC_BYTES: usize = 1024 * 1024;
+
+/// Upper-bounds a pre-allocation (in elements of `T`).
 ///
 /// A LEB128 `count` is untrusted and may be up to `u32::MAX` regardless of how
 /// many bytes actually follow. Every element occupies at least one byte, so
-/// `count` can never legitimately exceed `payload_len`.
-fn capped_capacity(count: u32, payload_len: usize) -> usize {
-    (count as usize).min(payload_len)
+/// `count` can never legitimately exceed `payload_len`; additionally the
+/// allocation in bytes (`count * size_of::<T>()`) is capped at
+/// [`MAX_PREALLOC_BYTES`].
+fn capped_capacity<T>(count: u32, payload_len: usize) -> usize {
+    let by_bytes = MAX_PREALLOC_BYTES / std::mem::size_of::<T>().max(1);
+    (count as usize).min(payload_len).min(by_bytes)
+}
+
+/// `Vec::with_capacity` bounded by [`capped_capacity`] for the element type.
+fn capped_vec<T>(count: u32, payload_len: usize) -> Vec<T> {
+    Vec::with_capacity(capped_capacity::<T>(count, payload_len))
 }
 
 /// Rejects a section whose declared size is larger than what its decoded
@@ -197,6 +209,19 @@ fn read_byte_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError>
 mod tests {
     use super::*;
     use crate::parser::ParseError;
+
+    #[test]
+    fn capped_capacity_bounds_bytes_by_element_size() {
+        // type-section attack: count = u32::MAX with a 200 MiB payload.
+        let n = capped_capacity::<[u64; 8]>(u32::MAX, 200 * 1024 * 1024);
+        assert!(n * std::mem::size_of::<[u64; 8]>() <= MAX_PREALLOC_BYTES);
+        // small, honest counts are unchanged
+        assert_eq!(capped_capacity::<u8>(3, 100), 3);
+        // payload length still bounds the count
+        assert_eq!(capped_capacity::<u8>(1000, 10), 10);
+        // zero-sized types do not divide by zero
+        assert_eq!(capped_capacity::<()>(5, 10), 5);
+    }
 
     #[test]
     fn checked_end_rejects_overflow() {

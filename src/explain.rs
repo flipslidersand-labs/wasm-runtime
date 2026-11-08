@@ -21,9 +21,15 @@ pub struct ExplainLine {
 
 impl fmt::Display for ExplainLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hex: Vec<String> = self.bytes.iter().map(|b| format!("{:02x}", b)).collect();
         // Show at most 8 hex bytes in the column; pad to fixed width.
-        let shown = hex[..hex.len().min(8)].join(" ");
+        // Only the shown prefix is formatted: payloads can be hundreds of MiB.
+        let hex: Vec<String> = self
+            .bytes
+            .iter()
+            .take(8)
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        let shown = hex.join(" ");
         let suffix = if self.bytes.len() > 8 { ".." } else { "" };
         write!(
             f,
@@ -35,15 +41,45 @@ impl fmt::Display for ExplainLine {
     }
 }
 
+/// Default cap on the number of [`ExplainLine`]s produced by [`explain_bytes`].
+///
+/// Each line costs on the order of 100+ bytes of heap, independent of how many
+/// input bytes it covers, so an unbounded walk multiplies memory use by
+/// ~200x for inputs made of one-byte entries.
+pub const MAX_EXPLAIN_LINES: usize = 100_000;
+
 /// Walk every byte of a wasm module and return annotated spans.
 ///
 /// Unknown / unsupported sections are emitted as a single "raw payload" line.
+/// At most [`MAX_EXPLAIN_LINES`] lines are produced; if the limit is hit, a
+/// final "output truncated" line is appended.
 pub fn explain_bytes(bytes: &[u8]) -> Vec<ExplainLine> {
-    let mut c = Cursor::new(bytes);
+    explain_bytes_with_limit(bytes, MAX_EXPLAIN_LINES)
+}
 
+/// Like [`explain_bytes`] with an explicit line limit.
+pub fn explain_bytes_with_limit(bytes: &[u8], max_lines: usize) -> Vec<ExplainLine> {
+    let mut c = Cursor::new(bytes, max_lines);
+    explain_inner(&mut c, bytes);
+    finish(c)
+}
+
+fn finish(mut c: Cursor) -> Vec<ExplainLine> {
+    if c.truncated {
+        let offset = c.trunc_offset;
+        c.lines.push(ExplainLine {
+            offset,
+            bytes: Vec::new(),
+            annotation: format!("output truncated: line limit ({}) reached", c.max_lines),
+        });
+    }
+    c.lines
+}
+
+fn explain_inner(c: &mut Cursor, bytes: &[u8]) {
     if bytes.len() < 8 {
         c.emit(bytes.len(), "truncated: too short for wasm header".into());
-        return c.lines;
+        return;
     }
 
     // ── Header ──────────────────────────────────────────────────────────────
@@ -51,7 +87,7 @@ pub fn explain_bytes(bytes: &[u8]) -> Vec<ExplainLine> {
     c.emit(4, "version: 1".into());
 
     // ── Sections ────────────────────────────────────────────────────────────
-    while c.remaining() > 0 {
+    while c.remaining() > 0 && !c.truncated {
         let id_offset = c.pos;
         if c.remaining() == 0 {
             break;
@@ -82,10 +118,10 @@ pub fn explain_bytes(bytes: &[u8]) -> Vec<ExplainLine> {
 
         let payload = &bytes[payload_start..payload_end];
         match id {
-            1 => annotate_type_section(&mut c, payload, payload_start),
-            3 => annotate_function_section(&mut c, payload, payload_start),
-            7 => annotate_export_section(&mut c, payload, payload_start),
-            10 => annotate_code_section(&mut c, payload, payload_start),
+            1 => annotate_type_section(c, payload, payload_start),
+            3 => annotate_function_section(c, payload, payload_start),
+            7 => annotate_export_section(c, payload, payload_start),
+            10 => annotate_code_section(c, payload, payload_start),
             _ => {
                 // Generic: show first bytes as raw payload.
                 let label = if size == 0 {
@@ -96,24 +132,32 @@ pub fn explain_bytes(bytes: &[u8]) -> Vec<ExplainLine> {
                 c.pos = id_offset + 1; // rewind to after id
                                        // Skip LEB128 consumed bytes + payload.
                 c.pos += consumed + size as usize;
-                c.lines.push(ExplainLine {
-                    offset: payload_start,
-                    bytes: payload.to_vec(),
-                    annotation: label,
-                });
+                if c.lines.len() >= c.max_lines {
+                    if !c.truncated {
+                        c.trunc_offset = payload_start;
+                    }
+                    c.truncated = true;
+                } else {
+                    c.lines.push(ExplainLine {
+                        offset: payload_start,
+                        bytes: payload.to_vec(),
+                        annotation: label,
+                    });
+                }
             }
         }
     }
-
-    c.lines
 }
 
 // ── Section annotators ───────────────────────────────────────────────────────
 
 fn annotate_type_section(c: &mut Cursor, payload: &[u8], base: usize) {
-    let mut pc = Cursor::new_at(payload, base);
+    let mut pc = Cursor::new_at(payload, base, c.max_lines.saturating_sub(c.lines.len()));
     let count = pc.read_leb128_u32("type count");
     for i in 0..count {
+        if pc.truncated {
+            break;
+        }
         if pc.remaining() == 0 {
             break;
         }
@@ -121,6 +165,9 @@ fn annotate_type_section(c: &mut Cursor, payload: &[u8], base: usize) {
         pc.emit(1, format!("functype[{}] marker: 0x{:02x}", i, marker));
         let params = pc.read_leb128_u32(&format!("functype[{}] param count", i));
         for p in 0..params {
+            if pc.truncated {
+                break;
+            }
             if pc.remaining() == 0 {
                 break;
             }
@@ -132,6 +179,9 @@ fn annotate_type_section(c: &mut Cursor, payload: &[u8], base: usize) {
         }
         let results = pc.read_leb128_u32(&format!("functype[{}] result count", i));
         for r in 0..results {
+            if pc.truncated {
+                break;
+            }
             if pc.remaining() == 0 {
                 break;
             }
@@ -143,13 +193,16 @@ fn annotate_type_section(c: &mut Cursor, payload: &[u8], base: usize) {
         }
     }
     c.pos += payload.len();
-    c.lines.extend(pc.lines);
+    c.absorb(pc);
 }
 
 fn annotate_function_section(c: &mut Cursor, payload: &[u8], base: usize) {
-    let mut pc = Cursor::new_at(payload, base);
+    let mut pc = Cursor::new_at(payload, base, c.max_lines.saturating_sub(c.lines.len()));
     let count = pc.read_leb128_u32("function count");
     for i in 0..count {
+        if pc.truncated {
+            break;
+        }
         if pc.remaining() == 0 {
             break;
         }
@@ -157,13 +210,16 @@ fn annotate_function_section(c: &mut Cursor, payload: &[u8], base: usize) {
         pc.emit(consumed, format!("func[{}]: type_index={}", i, type_idx));
     }
     c.pos += payload.len();
-    c.lines.extend(pc.lines);
+    c.absorb(pc);
 }
 
 fn annotate_export_section(c: &mut Cursor, payload: &[u8], base: usize) {
-    let mut pc = Cursor::new_at(payload, base);
+    let mut pc = Cursor::new_at(payload, base, c.max_lines.saturating_sub(c.lines.len()));
     let count = pc.read_leb128_u32("export count");
     for i in 0..count {
+        if pc.truncated {
+            break;
+        }
         if pc.remaining() < 1 {
             break;
         }
@@ -190,13 +246,16 @@ fn annotate_export_section(c: &mut Cursor, payload: &[u8], base: usize) {
         pc.emit(consumed, format!("export[{}] index: {}", i, idx));
     }
     c.pos += payload.len();
-    c.lines.extend(pc.lines);
+    c.absorb(pc);
 }
 
 fn annotate_code_section(c: &mut Cursor, payload: &[u8], base: usize) {
-    let mut pc = Cursor::new_at(payload, base);
+    let mut pc = Cursor::new_at(payload, base, c.max_lines.saturating_sub(c.lines.len()));
     let count = pc.read_leb128_u32("function body count");
     for i in 0..count {
+        if pc.truncated {
+            break;
+        }
         if pc.remaining() < 1 {
             break;
         }
@@ -214,6 +273,9 @@ fn annotate_code_section(c: &mut Cursor, payload: &[u8], base: usize) {
             format!("body[{}] local declaration count: {}", i, local_count),
         );
         for l in 0..local_count {
+            if pc.truncated {
+                break;
+            }
             if pc.pos >= body_end {
                 pc.emit(0, format!("body[{}] locals overrun body", i));
                 break;
@@ -238,7 +300,7 @@ fn annotate_code_section(c: &mut Cursor, payload: &[u8], base: usize) {
         }
     }
     c.pos += payload.len();
-    c.lines.extend(pc.lines);
+    c.absorb(pc);
 }
 
 // ── Cursor ───────────────────────────────────────────────────────────────────
@@ -248,25 +310,36 @@ struct Cursor<'a> {
     pos: usize,
     base: usize,
     lines: Vec<ExplainLine>,
+    max_lines: usize,
+    truncated: bool,
+    /// Absolute offset where output was cut off (valid when `truncated`).
+    trunc_offset: usize,
 }
 
 impl<'a> Cursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self {
-            bytes,
-            pos: 0,
-            base: 0,
-            lines: Vec::new(),
-        }
+    fn new(bytes: &'a [u8], max_lines: usize) -> Self {
+        Self::new_at(bytes, 0, max_lines)
     }
 
-    fn new_at(bytes: &'a [u8], base: usize) -> Self {
+    fn new_at(bytes: &'a [u8], base: usize, max_lines: usize) -> Self {
         Self {
             bytes,
             pos: 0,
             base,
             lines: Vec::new(),
+            max_lines,
+            truncated: false,
+            trunc_offset: 0,
         }
+    }
+
+    /// Merge a sub-cursor's lines (and truncation state) into this one.
+    fn absorb(&mut self, sub: Cursor) {
+        if sub.truncated && !self.truncated {
+            self.trunc_offset = sub.trunc_offset;
+        }
+        self.truncated |= sub.truncated;
+        self.lines.extend(sub.lines);
     }
 
     fn remaining(&self) -> usize {
@@ -276,6 +349,13 @@ impl<'a> Cursor<'a> {
     fn emit(&mut self, count: usize, annotation: String) {
         let count = count.min(self.remaining());
         if count == 0 && self.remaining() == 0 {
+            return;
+        }
+        if self.lines.len() >= self.max_lines {
+            if !self.truncated {
+                self.trunc_offset = self.base + self.pos;
+            }
+            self.truncated = true;
             return;
         }
         let offset = self.base + self.pos;
@@ -340,6 +420,74 @@ mod tests {
             b.push(payload.len() as u8);
             b.extend_from_slice(payload);
         }
+        b
+    }
+
+    #[test]
+    fn line_limit_truncates_with_explicit_line() {
+        // type section: 1 functype with 100 i32 params
+        let mut payload = vec![0x01, 0x60, 100];
+        payload.extend(std::iter::repeat(0x7F).take(100));
+        payload.push(0x00);
+        let bytes = make_wasm(&[(1, &payload)]);
+        let lines = explain_bytes_with_limit(&bytes, 20);
+        assert_eq!(lines.len(), 21);
+        let last = lines.last().unwrap();
+        assert!(last.annotation.contains("output truncated"));
+        assert!(last.annotation.contains("20"));
+    }
+
+    #[test]
+    fn line_limit_not_hit_leaves_output_unchanged() {
+        let bytes = make_wasm(&[(1, &[0x01, 0x60, 0x00, 0x00])]);
+        let a = explain_bytes_with_limit(&bytes, 10_000);
+        let b = explain_bytes(&bytes);
+        assert_eq!(a.len(), b.len());
+        assert!(!annotations(&a).iter().any(|s| s.contains("truncated")));
+    }
+
+    #[test]
+    fn line_limit_stops_when_params_exceed_limit() {
+        // 1 functype with 1000 i32 params, limit 20 -> exactly limit + 1 lines
+        let mut payload = vec![0x01, 0x60, 0xE8, 0x07];
+        payload.extend(std::iter::repeat(0x7F).take(1000));
+        payload.push(0x00);
+        let bytes = make_wasm_long(1, &payload);
+        let lines = explain_bytes_with_limit(&bytes, 20);
+        assert_eq!(lines.len(), 21);
+        let last = lines.last().unwrap();
+        assert!(last.annotation.contains("output truncated"));
+        // offset points inside the section payload where output stopped,
+        // not at the section end
+        assert!(last.offset < bytes.len() - 900);
+    }
+
+    #[test]
+    fn display_of_huge_bytes_is_bounded() {
+        let line = ExplainLine {
+            offset: 0,
+            bytes: vec![0xAB; 1024 * 1024],
+            annotation: "x".into(),
+        };
+        let s = format!("{}", line);
+        assert!(s.len() < 100, "len = {}", s.len());
+        assert!(s.contains("ab ab ab ab ab ab ab ab.."));
+    }
+
+    fn make_wasm_long(id: u8, payload: &[u8]) -> Vec<u8> {
+        let mut b = header();
+        b.push(id);
+        let mut n = payload.len();
+        loop {
+            let byte = (n & 0x7F) as u8;
+            n >>= 7;
+            if n == 0 {
+                b.push(byte);
+                break;
+            }
+            b.push(byte | 0x80);
+        }
+        b.extend_from_slice(payload);
         b
     }
 
