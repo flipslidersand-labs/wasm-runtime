@@ -844,6 +844,29 @@ mod tests {
     }
 
     #[test]
+    fn name_section_duplicate_skipped_subsection_rejected() {
+        // id=2 twice (skipped ids are also checked)
+        let bytes = vec![0x02, 0x01, 0xAA, 0x02, 0x01, 0xBB];
+        assert_eq!(
+            decode_name_section(&bytes),
+            Err(ParseError::SectionOutOfOrder(2))
+        );
+    }
+
+    #[test]
+    fn name_section_empty_function_vec_and_empty_module_name_accepted() {
+        // id=1, size=1, count=0; id=0, size=1, name len=0
+        let bytes = vec![0x01, 0x01, 0x00, 0x00, 0x01, 0x00];
+        assert_eq!(
+            decode_name_section(&bytes),
+            Ok(NameSection {
+                module: Some(String::new()),
+                functions: vec![],
+            })
+        );
+    }
+
+    #[test]
     fn name_section_descending_ids_still_accepted() {
         // id=1 then id=0: ordering is not enforced, only duplicates
         let bytes = vec![0x01, 0x01, 0x00, 0x00, 0x02, 0x01, 0x61];

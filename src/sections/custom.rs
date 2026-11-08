@@ -66,6 +66,8 @@ impl fmt::Display for NameSection {
 ///
 /// The payload is a sequence of subsections, each `id:byte size:u32 payload[size]`.
 /// Unknown subsection ids are skipped by advancing `size` bytes.
+/// Trailing bytes inside a subsection and a repeated subsection id are rejected
+/// (ids out of ascending order are tolerated).
 pub fn decode_name_section(bytes: &[u8]) -> Result<NameSection, ParseError> {
     let mut pos = 0;
     let mut ns = NameSection::default();
