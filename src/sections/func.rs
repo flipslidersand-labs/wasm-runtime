@@ -158,7 +158,7 @@ pub fn decode_code_section(payload: &[u8]) -> Result<Vec<FuncBody>, ParseError> 
     let (count, n) = decode_leb128_u32(payload, pos)?;
     pos += n;
 
-    let mut bodies = Vec::with_capacity(super::capped_capacity(count, payload.len()));
+    let mut bodies = super::capped_vec(count, payload.len());
     for _ in 0..count {
         let (size, n) = decode_leb128_u32(payload, pos)?;
         pos += n;
@@ -170,7 +170,7 @@ pub fn decode_code_section(payload: &[u8]) -> Result<Vec<FuncBody>, ParseError> 
         let (local_count, n) = decode_leb128_u32(payload, pos)?;
         pos += n;
 
-        let mut locals = Vec::with_capacity(super::capped_capacity(local_count, payload.len()));
+        let mut locals = super::capped_vec(local_count, payload.len());
         let mut total_locals: u64 = 0;
         for _ in 0..local_count {
             let (cnt, n) = decode_leb128_u32(payload, pos)?;
