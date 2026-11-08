@@ -819,6 +819,37 @@ mod tests {
         assert_eq!(decode_name_section(&bytes), Err(ParseError::UnexpectedEof));
     }
 
+    #[test]
+    fn name_section_module_trailing_bytes_rejected() {
+        // id=0, size=3, name len=1 'm', trailing 0xFF
+        let bytes = vec![0x00, 0x03, 0x01, 0x6D, 0xFF];
+        assert_eq!(decode_name_section(&bytes), Err(ParseError::SizeMismatch));
+    }
+
+    #[test]
+    fn name_section_function_trailing_bytes_rejected() {
+        // id=1, size=5: count=1, idx=0, name "f", trailing 0xFF
+        let bytes = vec![0x01, 0x05, 0x01, 0x00, 0x01, 0x66, 0xFF];
+        assert_eq!(decode_name_section(&bytes), Err(ParseError::SizeMismatch));
+    }
+
+    #[test]
+    fn name_section_duplicate_subsection_rejected() {
+        // id=0 twice
+        let bytes = vec![0x00, 0x02, 0x01, 0x61, 0x00, 0x02, 0x01, 0x62];
+        assert_eq!(
+            decode_name_section(&bytes),
+            Err(ParseError::SectionOutOfOrder(0))
+        );
+    }
+
+    #[test]
+    fn name_section_descending_ids_still_accepted() {
+        // id=1 then id=0: ordering is not enforced, only duplicates
+        let bytes = vec![0x01, 0x01, 0x00, 0x00, 0x02, 0x01, 0x61];
+        assert!(decode_name_section(&bytes).is_ok());
+    }
+
     // ── Export section ─────────────────────────────────────────────────────────
 
     #[test]
