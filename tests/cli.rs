@@ -414,3 +414,97 @@ fn diff_nonexistent_file_exits_nonzero_with_cannot_read() {
         .failure()
         .stderr(predicate::str::contains("cannot read"));
 }
+
+// ── 入力サイズ上限 (#177) ─────────────────────────────────
+
+fn write_sized(name: &str, len: usize) -> TmpWasm {
+    let path = std::env::temp_dir().join(format!("{}_{}.wasm", name, std::process::id()));
+    let mut data = b"\x00asm\x01\x00\x00\x00".to_vec();
+    data.resize(len, 0);
+    std::fs::write(&path, data).unwrap();
+    TmpWasm(path)
+}
+
+#[test]
+fn max_size_exceeded_exits_one() {
+    let tmp = write_sized("max_size_single_177", 64);
+    wasm_dump()
+        .args(["--max-size", "16"])
+        .arg(tmp.0.to_str().unwrap())
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("exceeds the size limit"));
+}
+
+#[test]
+fn max_size_at_limit_is_accepted() {
+    let tmp = write_sized("max_size_exact_177", 8);
+    wasm_dump()
+        .args(["--max-size", "8"])
+        .arg(tmp.0.to_str().unwrap())
+        .assert()
+        .success();
+}
+
+#[test]
+fn max_size_invalid_value_exits_one() {
+    wasm_dump()
+        .args(["--max-size", "abc", MINIMAL_WASM])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("--max-size"));
+}
+
+#[test]
+fn default_limit_accepts_normal_file() {
+    wasm_dump().arg(MINIMAL_WASM).assert().success();
+}
+
+#[test]
+fn diff_max_size_exceeded_first_file() {
+    let tmp = write_sized("max_size_diff_a_177", 64);
+    wasm_dump()
+        .args(["--diff", "--max-size", "16"])
+        .arg(tmp.0.to_str().unwrap())
+        .arg(MINIMAL_WASM)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("exceeds the size limit"));
+}
+
+#[test]
+fn diff_max_size_exceeded_second_file() {
+    let tmp = write_sized("max_size_diff_b_177", 64);
+    wasm_dump()
+        .args(["--diff", "--max-size", "16", MINIMAL_WASM])
+        .arg(tmp.0.to_str().unwrap())
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("exceeds the size limit"));
+}
+
+#[cfg(unix)]
+#[test]
+fn max_size_non_regular_file_is_bounded() {
+    wasm_dump()
+        .args(["--max-size", "1024", "/dev/zero"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("exceeds the size limit"));
+}
+
+#[cfg(unix)]
+#[test]
+fn diff_max_size_non_regular_file_is_bounded() {
+    wasm_dump()
+        .args(["--diff", "--max-size", "1024", "/dev/zero", MINIMAL_WASM])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("exceeds the size limit"));
+}
