@@ -673,3 +673,26 @@ fn control_chars_in_validation_error_are_escaped_on_stderr() {
     }
     assert!(stderr.contains("bad\\u{1b}[2J\\u{7}\\u{a}fake"), "{stderr}");
 }
+
+#[test]
+fn backslash_quote_c1_and_bidi_in_names_are_escaped() {
+    let mut m = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+    let mut exp = vec![2];
+    // literal backslash+n (2 chars) vs real newline must be distinguishable
+    exp.extend(name_bytes("a\\nb\"q"));
+    exp.extend([0x00, 0x00]);
+    exp.extend(name_bytes("c1\u{85}bidi\u{202e}x\u{2066}"));
+    exp.extend([0x00, 0x00]);
+    m.extend(section(7, &exp));
+    let path = std::env::temp_dir().join(format!("wasm-dump-184-{}.wasm", std::process::id()));
+    std::fs::write(&path, m).unwrap();
+    let out = wasm_dump().arg("--verbose").arg(&path).output().unwrap();
+    std::fs::remove_file(&path).ok();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    for want in ["a\\\\nb\\\"q", "c1\\u{85}bidi\\u{202e}x\\u{2066}"] {
+        assert!(stdout.contains(want), "missing {want:?} in:\n{stdout}");
+    }
+    for c in ['\u{85}', '\u{202e}', '\u{2066}'] {
+        assert!(!stdout.contains(c), "raw {c:?} in stdout:\n{stdout}");
+    }
+}

@@ -24,13 +24,23 @@ pub use types::{
     FuncType, Limits, RefType, Table, ValType,
 };
 
-/// Escapes control characters (`char::is_control`) as `\u{..}` so that an
-/// untrusted name is safe to print to a terminal. Not for WAT output (see
-/// `wat::wat_string`).
+/// True for characters that must not reach a terminal raw: control characters
+/// (including C1, U+0080..=U+009F) and bidi controls (U+202A..=U+202E,
+/// U+2066..=U+2069).
+pub(crate) fn is_unsafe_char(c: char) -> bool {
+    c.is_control() || matches!(c as u32, 0x202A..=0x202E | 0x2066..=0x2069)
+}
+
+/// Escapes `\`, `"` and unsafe characters (see `is_unsafe_char`) so that an
+/// untrusted name is unambiguous and safe to print to a terminal. Unsafe
+/// characters become `\u{..}`. Not for WAT output (see `wat::wat_string`).
 pub fn display_name(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        if c.is_control() {
+        if c == '\\' || c == '"' {
+            out.push('\\');
+            out.push(c);
+        } else if is_unsafe_char(c) {
             out.push_str(&format!("\\u{{{:x}}}", c as u32));
         } else {
             out.push(c);
@@ -179,6 +189,19 @@ fn read_byte_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError>
 mod tests {
     use super::*;
     use crate::parser::ParseError;
+
+    #[test]
+    fn display_name_escapes_ambiguous_and_bidi() {
+        assert_eq!(display_name("plain é"), "plain é");
+        assert_eq!(display_name("a\\nb"), "a\\\\nb");
+        assert_eq!(display_name("a\nb"), "a\\u{a}b");
+        assert_eq!(display_name("q\"q"), "q\\\"q");
+        assert_eq!(display_name("\u{85}\u{9f}"), "\\u{85}\\u{9f}");
+        assert_eq!(
+            display_name("\u{202a}\u{202e}\u{2066}\u{2069}"),
+            "\\u{202a}\\u{202e}\\u{2066}\\u{2069}"
+        );
+    }
 
     // ── Oversized count guard ─────────────────────────────────────────────────
 
