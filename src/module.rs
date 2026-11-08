@@ -112,7 +112,7 @@ fn apply_section<E>(
 /// each of its three failure sites.
 trait MapParseError: Sized {
     fn header(e: ParseError) -> Self;
-    fn iter(e: ParseError) -> Self;
+    fn iter(e: ParseError, at: Option<(usize, u8)>) -> Self;
     fn section(e: ParseError, hdr: &SectionHeader) -> Self;
 }
 
@@ -120,7 +120,7 @@ impl MapParseError for ParseError {
     fn header(e: ParseError) -> Self {
         e
     }
-    fn iter(e: ParseError) -> Self {
+    fn iter(e: ParseError, _at: Option<(usize, u8)>) -> Self {
         e
     }
     fn section(e: ParseError, _hdr: &SectionHeader) -> Self {
@@ -132,8 +132,15 @@ impl MapParseError for ParseErrorContext {
     fn header(e: ParseError) -> Self {
         ParseErrorContext::new(e).with_offset(0)
     }
-    fn iter(e: ParseError) -> Self {
-        ParseErrorContext::new(e)
+    fn iter(e: ParseError, at: Option<(usize, u8)>) -> Self {
+        match at {
+            // Offset of the failing section's id byte (its payload start is
+            // not known when the header itself is malformed).
+            Some((offset, id)) => ParseErrorContext::new(e)
+                .with_offset(offset)
+                .with_section(id),
+            None => ParseErrorContext::new(e),
+        }
     }
     fn section(e: ParseError, hdr: &SectionHeader) -> Self {
         ParseErrorContext::new(e)
@@ -153,8 +160,9 @@ fn parse_impl<E: MapParseError>(
         ..Module::default()
     };
 
-    for result in section_iter(bytes) {
-        let hdr = result.map_err(E::iter)?;
+    let mut iter = section_iter(bytes);
+    while let Some(result) = iter.next() {
+        let hdr = result.map_err(|e| E::iter(e, iter.error_location()))?;
         let payload = &bytes[hdr.offset..hdr.offset + hdr.size as usize];
         on_section(SectionEvent {
             id: hdr.id,

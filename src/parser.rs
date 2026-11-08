@@ -225,6 +225,7 @@ pub fn section_iter(bytes: &[u8]) -> SectionIter<'_> {
         bytes,
         pos: 8,
         last_rank: 0,
+        error_at: None,
     }
 }
 
@@ -247,6 +248,16 @@ pub struct SectionIter<'a> {
     bytes: &'a [u8],
     pos: usize,
     last_rank: u8,
+    /// Offset and id of the section header whose decoding last failed.
+    error_at: Option<(usize, u8)>,
+}
+
+impl SectionIter<'_> {
+    /// Offset of the id byte and the section id of the most recent error
+    /// returned by `next`, if any.
+    pub(crate) fn error_location(&self) -> Option<(usize, u8)> {
+        self.error_at
+    }
 }
 
 impl<'a> Iterator for SectionIter<'a> {
@@ -257,8 +268,10 @@ impl<'a> Iterator for SectionIter<'a> {
             return None;
         }
 
+        let start = self.pos;
         let id = self.bytes[self.pos];
         self.pos += 1;
+        self.error_at = Some((start, id));
 
         if id != 0 {
             // Unknown ids have no rank: they are passed through (as an "unknown"
@@ -285,6 +298,7 @@ impl<'a> Iterator for SectionIter<'a> {
         };
         self.pos = end;
 
+        self.error_at = None;
         Some(Ok(SectionHeader { id, size, offset }))
     }
 }

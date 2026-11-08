@@ -294,6 +294,10 @@ fn annotate_code_section(c: &mut Cursor, payload: &[u8], base: usize) {
                 format!("body[{}] local[{}] type: {}", i, l, val_type_name(t)),
             );
         }
+        // Locals may overrun the body; always resume at the declared body end.
+        if pc.pos > body_end {
+            pc.pos = body_end;
+        }
         let expr_len = body_end.saturating_sub(pc.pos);
         if expr_len > 0 && pc.remaining() >= expr_len {
             pc.emit(expr_len, format!("body[{}] expr ({} bytes)", i, expr_len));
@@ -612,6 +616,22 @@ mod tests {
         let bytes = make_wasm(&[(10, code_payload)]);
         let a = annotations(&explain_bytes(&bytes)).join("\n");
         assert!(a.contains("body[0] locals overrun body"));
+    }
+
+    #[test]
+    fn code_section_locals_overrun_resumes_at_body_end() {
+        // 2 bodies; body[0] (size 2) has a local decl whose type byte lies
+        // past its end. body[1] must be read from body[0]'s end (payload
+        // index 4), not from where the locals decoding stopped (index 5).
+        let code_payload = &[0x02, 0x02, 0x01, 0x02, 0x7F, 0x00, 0x0B];
+        let bytes = make_wasm(&[(10, code_payload)]);
+        let lines = explain_bytes(&bytes);
+        let l = lines
+            .iter()
+            .find(|l| l.annotation.starts_with("body[1] size"))
+            .expect("body[1] size line");
+        // payload starts after header (8) + id (1) + size (1)
+        assert_eq!(l.offset, 10 + 4);
     }
 
     #[test]
