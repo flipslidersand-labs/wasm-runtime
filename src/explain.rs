@@ -12,7 +12,8 @@ use std::fmt;
 pub struct ExplainLine {
     /// Byte offset from the start of the module.
     pub offset: usize,
-    /// The raw bytes covered by this annotation (up to 8 shown).
+    /// The raw bytes covered by this annotation. For section payloads this is
+    /// the entire payload, not a truncated prefix.
     pub bytes: Vec<u8>,
     /// Human-readable description of what the bytes mean.
     pub annotation: String,
