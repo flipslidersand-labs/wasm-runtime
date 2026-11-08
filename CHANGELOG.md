@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** function bodies containing opcodes outside the supported set (MVP, sign-extension, basic reference types, `0xFC` prefix; e.g. SIMD, threads, exception handling, tail call) are now rejected at parse time with `UnknownOpcode` instead of being accepted unread (PR #160)
 - **Breaking:** a section whose declared size is larger than its decoded content is now rejected with `SizeMismatch`, whose message is generalized to "declared size does not match payload" (PR #156)
 - **Breaking:** `DiffStatus::Equal` is now `Equal { size: u32 }` instead of a unit variant; `Display` prints the actual byte count instead of `(0 bytes)` (#64, PR #84)
+- **Breaking:** `decode_name_section` now rejects a module-name or function-names subsection with trailing bytes (`SizeMismatch`) and a repeated subsection id (`SectionOutOfOrder`), both previously accepted (#201)
 - **Breaking:** modules with out-of-order or duplicated non-custom sections, previously accepted, are now rejected with `SectionOutOfOrder` (PR #155)
 - **Breaking:** init expressions are unified to the typed `ConstExpr`: `Global.init_expr: Vec<u8>` becomes `Global.init`, and `offset_expr` of active data/element segments becomes `offset` (#70, PR #96)
 - Names printed by `wasm-dump` and `Display` impls now escape control characters, `\`, `"`, C1 controls, and bidi/line-separator characters as `\u{..}` (PR #181, #188, #197)
