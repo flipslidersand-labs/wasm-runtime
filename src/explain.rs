@@ -471,7 +471,7 @@ mod tests {
         };
         let s = format!("{}", line);
         assert!(s.len() < 100, "len = {}", s.len());
-        assert!(s.contains("ab ab ab ab ab ab ab ab .."));
+        assert!(s.contains("ab ab ab ab ab ab ab ab.."));
     }
 
     fn make_wasm_long(id: u8, payload: &[u8]) -> Vec<u8> {
