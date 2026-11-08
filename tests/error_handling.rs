@@ -441,3 +441,19 @@ fn parse_module_invalid_magic_returns_error() {
 fn parse_module_empty_bytes_returns_eof() {
     assert_eq!(parse_module(&[]), Err(ParseError::UnexpectedEof));
 }
+
+#[test]
+fn display_unsupported_wide_flags() {
+    let msg = format!("{}", ParseError::UnsupportedDataFlagWide(0x100));
+    assert!(
+        msg.contains("data") && msg.contains("0x100"),
+        "got: {}",
+        msg
+    );
+    let msg = format!("{}", ParseError::UnsupportedElementFlagWide(0x100));
+    assert!(
+        msg.contains("element") && msg.contains("0x100"),
+        "got: {}",
+        msg
+    );
+}

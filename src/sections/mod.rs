@@ -1262,6 +1262,26 @@ mod tests {
     }
 
     #[test]
+    fn data_section_wide_flag_not_truncated() {
+        // flag = LEB128 80 02 = 0x100; must not be reported as 0x00
+        let payload = [0x01, 0x80, 0x02];
+        assert_eq!(
+            decode_data_section(&payload),
+            Err(ParseError::UnsupportedDataFlagWide(0x100))
+        );
+    }
+
+    #[test]
+    fn data_section_flag_0xff_stays_u8_variant() {
+        // flag = LEB128 FF 01 = 0xFF, the largest value the u8 variant holds
+        let payload = [0x01, 0xFF, 0x01];
+        assert_eq!(
+            decode_data_section(&payload),
+            Err(ParseError::UnsupportedDataFlag(0xFF))
+        );
+    }
+
+    #[test]
     fn data_section_unsupported_flag() {
         let payload = [0x01, 0x05, 0x00];
         assert_eq!(
@@ -1468,6 +1488,25 @@ mod tests {
         assert_eq!(
             decode_element_section(&payload),
             Err(ParseError::UnknownRefType(0x99))
+        );
+    }
+
+    #[test]
+    fn element_section_wide_flag_not_truncated() {
+        // flag = LEB128 80 02 = 0x100; must not be reported as 0x00
+        let payload = [0x01, 0x80, 0x02];
+        assert_eq!(
+            decode_element_section(&payload),
+            Err(ParseError::UnsupportedElementFlagWide(0x100))
+        );
+    }
+
+    #[test]
+    fn element_section_flag_0xff_stays_u8_variant() {
+        let payload = [0x01, 0xFF, 0x01];
+        assert_eq!(
+            decode_element_section(&payload),
+            Err(ParseError::UnsupportedElementFlag(0xFF))
         );
     }
 

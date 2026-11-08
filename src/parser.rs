@@ -19,6 +19,12 @@ pub enum ParseError {
     UnsupportedInitExpr(u8),
     UnsupportedDataFlag(u8),
     UnsupportedElementFlag(u8),
+    /// Data segment flag above `0xFF`; [`ParseError::UnsupportedDataFlag`]
+    /// covers flags that fit in a `u8`.
+    UnsupportedDataFlagWide(u32),
+    /// Element segment flag above `0xFF`; [`ParseError::UnsupportedElementFlag`]
+    /// covers flags that fit in a `u8`.
+    UnsupportedElementFlagWide(u32),
     SectionOutOfOrder(u8),
     /// A function body contains an opcode this parser does not know.
     UnknownOpcode(u8),
@@ -56,6 +62,12 @@ impl std::fmt::Display for ParseError {
             }
             ParseError::UnsupportedElementFlag(b) => {
                 write!(f, "unsupported element segment flag: {:#04X}", b)
+            }
+            ParseError::UnsupportedDataFlagWide(v) => {
+                write!(f, "unsupported data segment flag: {:#X}", v)
+            }
+            ParseError::UnsupportedElementFlagWide(v) => {
+                write!(f, "unsupported element segment flag: {:#X}", v)
             }
             ParseError::SectionOutOfOrder(b) => {
                 write!(f, "section {:#04X} is duplicated or out of order", b)
