@@ -27,12 +27,17 @@ pub use types::{
 /// True for characters that must not reach a terminal raw: control characters
 /// (including C1, U+0080..=U+009F) and bidi controls (U+202A..=U+202E,
 /// U+2066..=U+2069), bidi marks (U+200E, U+200F, U+061C) and line/paragraph
-/// separators (U+2028, U+2029).
+/// separators (U+2028, U+2029), and invisible format characters that make
+/// names look identical (U+200B, U+FEFF, U+2060..=U+2064, U+00AD).
+///
+/// U+200C (ZWNJ) and U+200D (ZWJ) are deliberately NOT escaped: ZWNJ is
+/// required by some scripts and ZWJ builds emoji sequences, so escaping them
+/// would degrade legitimate names.
 pub(crate) fn is_unsafe_char(c: char) -> bool {
     c.is_control()
         || matches!(
             c as u32,
-            0x061C | 0x200E | 0x200F | 0x2028 | 0x2029 | 0x202A..=0x202E | 0x2066..=0x2069
+            0x00AD | 0x061C | 0x200B | 0x200E | 0x200F | 0x2028 | 0x2029 | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF
         )
 }
 
@@ -148,31 +153,25 @@ fn read_global_type(payload: &[u8], pos: &mut usize) -> Result<GlobalType, Parse
     Ok(GlobalType { valtype, mutable })
 }
 
-/// Skips one LEB128 value of at most `max_len` bytes (5 for u32/i32, 10 for i64).
-fn skip_leb128(payload: &[u8], pos: &mut usize, max_len: usize) -> Result<(), ParseError> {
-    let mut len = 0;
-    loop {
-        if len == max_len {
-            return Err(ParseError::Leb128Overflow);
-        }
-        len += 1;
-        if *pos >= payload.len() {
-            return Err(ParseError::UnexpectedEof);
-        }
-        let byte = payload[*pos];
-        *pos += 1;
-        if byte & 0x80 == 0 {
-            return Ok(());
+/// Skips one LEB128 value of at most `max` bytes starting at `pos`; returns the
+/// position after it. Does not check the value's range.
+fn skip_leb(buf: &[u8], pos: usize, max: usize) -> Result<usize, ParseError> {
+    for i in 0..max {
+        match buf.get(pos + i) {
+            Some(b) if b & 0x80 == 0 => return Ok(pos + i + 1),
+            Some(_) => {}
+            None => return Err(ParseError::UnexpectedEof),
         }
     }
+    Err(ParseError::Leb128Overflow)
 }
 
-fn advance(payload: &[u8], pos: &mut usize, n: usize) -> Result<(), ParseError> {
-    if *pos + n > payload.len() {
-        return Err(ParseError::UnexpectedEof);
+/// Skips `n` fixed bytes starting at `pos`; returns the position after them.
+fn skip_bytes(buf: &[u8], pos: usize, n: usize) -> Result<usize, ParseError> {
+    match pos.checked_add(n) {
+        Some(end) if end <= buf.len() => Ok(end),
+        _ => Err(ParseError::UnexpectedEof),
     }
-    *pos += n;
-    Ok(())
 }
 
 /// Reads a constant initializer expression, returning its raw bytes including the
@@ -188,13 +187,13 @@ fn read_init_expr(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError
         let op = payload[*pos];
         *pos += 1;
         match op {
-            0x0B => break,                                // end
-            0x41 | 0x23 => skip_leb128(payload, pos, 5)?, // i32.const, global.get
-            0x42 => skip_leb128(payload, pos, 10)?,       // i64.const
-            0x43 => advance(payload, pos, 4)?,            // f32.const
-            0x44 => advance(payload, pos, 8)?,            // f64.const
-            0xD2 => skip_leb128(payload, pos, 5)?,        // ref.func funcidx
-            0xD0 => advance(payload, pos, 1)?,            // ref.null heaptype
+            0x0B => break,                                     // end
+            0x41 | 0x23 => *pos = skip_leb(payload, *pos, 5)?, // i32.const, global.get
+            0x42 => *pos = skip_leb(payload, *pos, 10)?,       // i64.const
+            0x43 => *pos = skip_bytes(payload, *pos, 4)?,      // f32.const
+            0x44 => *pos = skip_bytes(payload, *pos, 8)?,      // f64.const
+            0xD2 => *pos = skip_leb(payload, *pos, 5)?,        // ref.func funcidx
+            0xD0 => *pos = skip_bytes(payload, *pos, 1)?,      // ref.null heaptype
             _ => return Err(ParseError::UnsupportedInitExpr(op)),
         }
     }
@@ -242,6 +241,26 @@ mod tests {
         );
         assert_eq!(checked_end(2, 3, 5), Ok(5));
         assert_eq!(checked_end(2, 4, 5), Err(ParseError::UnexpectedEof));
+    }
+
+    #[test]
+    fn display_name_escapes_invisible_chars_but_keeps_zwj_zwnj() {
+        assert_eq!(
+            display_name("\u{200b}\u{feff}\u{2060}\u{2064}\u{ad}"),
+            "\\u{200b}\\u{feff}\\u{2060}\\u{2064}\\u{ad}"
+        );
+        assert_eq!(display_name("\u{2065}"), "\u{2065}");
+        assert_eq!(display_name("a\u{200c}b\u{200d}c"), "a\u{200c}b\u{200d}c");
+    }
+
+    #[test]
+    fn import_display_quotes_module_and_name() {
+        let imp = Import {
+            module: "a\"::b".to_string(),
+            name: "c".to_string(),
+            desc: ImportDesc::Func(0),
+        };
+        assert_eq!(imp.to_string(), "\"a\\\"::b\"::\"c\"  Func(0)");
     }
 
     #[test]
@@ -1074,7 +1093,7 @@ mod tests {
             name: "log".to_string(),
             desc: ImportDesc::Func(2),
         };
-        assert_eq!(imp.to_string(), "env::log  Func(2)");
+        assert_eq!(imp.to_string(), "\"env\"::\"log\"  Func(2)");
     }
 
     #[test]
@@ -1087,7 +1106,7 @@ mod tests {
                 mutable: true,
             },
         };
-        assert_eq!(imp.to_string(), "env::g  Global(i32 mut)");
+        assert_eq!(imp.to_string(), "\"env\"::\"g\"  Global(i32 mut)");
     }
 
     #[test]
@@ -1790,6 +1809,41 @@ mod tests {
                 bytes
             );
         }
+    }
+
+    #[test]
+    fn read_init_expr_leb_and_fixed_boundaries() {
+        let run = |b: &[u8]| {
+            let mut pos = 0;
+            read_init_expr(b, &mut pos).map(|v| (v.len(), pos))
+        };
+        // exactly max-length LEBs are accepted (5 for i32, 10 for i64)
+        assert_eq!(run(&[0x41, 0x80, 0x80, 0x80, 0x80, 0x00, 0x0B]), Ok((7, 7)));
+        let mut i64c = vec![0x42];
+        i64c.extend([0x80; 9]);
+        i64c.extend([0x00, 0x0B]);
+        assert_eq!(run(&i64c), Ok((12, 12)));
+        // one byte past max
+        assert_eq!(
+            run(&[0x41, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00, 0x0B]),
+            Err(ParseError::Leb128Overflow)
+        );
+        let mut long = vec![0x42];
+        long.extend([0x80; 10]);
+        long.extend([0x00, 0x0B]);
+        assert_eq!(run(&long), Err(ParseError::Leb128Overflow));
+        // max continuation bytes then EOF: overflow wins over EOF
+        assert_eq!(
+            run(&[0x41, 0x80, 0x80, 0x80, 0x80, 0x80]),
+            Err(ParseError::Leb128Overflow)
+        );
+        // fewer than max continuation bytes then EOF
+        assert_eq!(run(&[0x41, 0x80, 0x80]), Err(ParseError::UnexpectedEof));
+        assert_eq!(run(&[0x23]), Err(ParseError::UnexpectedEof));
+        // fixed-size operands exactly fitting / one short
+        assert_eq!(run(&[0x43, 0, 0, 0, 0, 0x0B]), Ok((6, 6)));
+        assert_eq!(run(&[0x43, 0, 0, 0]), Err(ParseError::UnexpectedEof));
+        assert_eq!(run(&[0xD0, 0x70, 0x0B]), Ok((3, 3)));
     }
 
     #[test]

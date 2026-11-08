@@ -116,7 +116,7 @@ Section[1] Type (6 bytes)
   [0] (i32) -> i32
 
 Section[2] Import (9 bytes)
-  [0] env::f  Func(0)
+  [0] "env"::"f"  Func(0)
 
 Section[3] Func (2 bytes)
   [0] type[0]
