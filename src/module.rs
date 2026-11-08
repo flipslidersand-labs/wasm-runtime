@@ -9,7 +9,7 @@ use crate::sections::{
     decode_code_section, decode_custom_section, decode_data_section, decode_datacount_section,
     decode_element_section, decode_export_section, decode_function_section, decode_global_section,
     decode_import_section, decode_memory_section, decode_start_section, decode_table_section,
-    decode_type_section, scan_expr, CustomSection, DataSegment, ElementInit, ElementMode,
+    decode_type_section, scan_expr, CustomSection, DataMode, DataSegment, ElementInit, ElementMode,
     ElementSegment, Export, ExportKind, FuncBody, FuncType, Global, Import, ImportDesc, Limits,
     Table,
 };
@@ -183,6 +183,8 @@ pub enum ValidationError {
     },
     /// An element segment initializes a table that does not exist.
     ElementTableIndexOutOfRange { index: u32, table_space: usize },
+    /// An active data segment targets a memory that does not exist.
+    DataMemoryIndexOutOfRange { index: u32, memory_space: usize },
     /// An element segment references a function beyond the function space.
     ElementFuncIndexOutOfRange { index: u32, func_space: usize },
     /// The start section names a function beyond the function space.
@@ -191,6 +193,12 @@ pub enum ValidationError {
     DataCountMismatch { declared: u32, actual: usize },
     /// A function uses `memory.init` or `data.drop`, which need a datacount section.
     DataCountRequired,
+    /// A memory or table declares `min` greater than `max`.
+    LimitsMinGreaterThanMax {
+        kind: &'static str,
+        min: u32,
+        max: u32,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -221,6 +229,14 @@ impl fmt::Display for ValidationError {
                 "element table index {} out of range (only {} tables)",
                 index, table_space
             ),
+            ValidationError::DataMemoryIndexOutOfRange {
+                index,
+                memory_space,
+            } => write!(
+                f,
+                "data memory index {} out of range (only {} memories)",
+                index, memory_space
+            ),
             ValidationError::ElementFuncIndexOutOfRange { index, func_space } => write!(
                 f,
                 "element func index {} out of range (func space {})",
@@ -239,6 +255,11 @@ impl fmt::Display for ValidationError {
             ValidationError::DataCountRequired => write!(
                 f,
                 "memory.init or data.drop is used but there is no datacount section"
+            ),
+            ValidationError::LimitsMinGreaterThanMax { kind, min, max } => write!(
+                f,
+                "{} size minimum {} must not be greater than maximum {}",
+                kind, min, max
             ),
         }
     }
@@ -297,6 +318,29 @@ impl Module {
             }
         }
 
+        // 2c. limits of imported and locally-defined tables/memories need min <= max.
+        let imported_limits = self.imports.iter().filter_map(|i| match &i.desc {
+            ImportDesc::Table { limits, .. } => Some(("table", limits)),
+            ImportDesc::Memory(limits) => Some(("memory", limits)),
+            _ => None,
+        });
+        let local_limits = self
+            .tables
+            .iter()
+            .map(|t| ("table", &t.limits))
+            .chain(self.memories.iter().map(|m| ("memory", m)));
+        for (kind, limits) in imported_limits.chain(local_limits) {
+            if let Some(max) = limits.max {
+                if limits.min > max {
+                    return Err(ValidationError::LimitsMinGreaterThanMax {
+                        kind,
+                        min: limits.min,
+                        max,
+                    });
+                }
+            }
+        }
+
         // 3. export indices must fall within their (imports + defined) space.
         let func_space = counts.funcs + self.functions.len();
         let table_space = counts.tables + self.tables.len();
@@ -340,6 +384,18 @@ impl Module {
                             func_space,
                         });
                     }
+                }
+            }
+        }
+
+        // 4b. active data segments must target an existing memory.
+        for segment in &self.data {
+            if let DataMode::Active { memory_index, .. } = &segment.mode {
+                if *memory_index as usize >= memory_space {
+                    return Err(ValidationError::DataMemoryIndexOutOfRange {
+                        index: *memory_index,
+                        memory_space,
+                    });
                 }
             }
         }
@@ -666,6 +722,71 @@ mod tests {
         }
     }
 
+    fn active_data(memory_index: u32) -> DataSegment {
+        DataSegment {
+            mode: crate::sections::DataMode::Active {
+                memory_index,
+                offset: ConstExpr::I32(0),
+            },
+            bytes: vec![],
+        }
+    }
+
+    #[test]
+    fn data_memory_index_no_memory_is_invalid() {
+        // flag 0 data segment (implicit memory 0) with no memory defined.
+        let mut bytes = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        bytes.extend_from_slice(&[0x0B, 0x06, 0x01, 0x00, 0x41, 0x00, 0x0B, 0x00]);
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::DataMemoryIndexOutOfRange {
+                index: 0,
+                memory_space: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn data_memory_index_beyond_defined_memory() {
+        let module = Module {
+            memories: vec![Limits { min: 1, max: None }],
+            data: vec![active_data(1)],
+            ..Module::default()
+        };
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::DataMemoryIndexOutOfRange {
+                index: 1,
+                memory_space: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn data_memory_index_valid_with_defined_memory() {
+        let module = Module {
+            memories: vec![Limits { min: 1, max: None }],
+            data: vec![active_data(0)],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
+    }
+
+    #[test]
+    fn data_memory_index_counts_imported_memory() {
+        let module = Module {
+            imports: vec![Import {
+                module: "env".to_string(),
+                name: "m".to_string(),
+                desc: ImportDesc::Memory(Limits { min: 1, max: None }),
+            }],
+            data: vec![active_data(0)],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
+    }
+
     #[test]
     fn datacount_matches_data_section() {
         let module = Module {
@@ -800,5 +921,113 @@ mod tests {
         bytes.push(0x00);
         let err = parse_module_with_context(&bytes).unwrap_err();
         assert_eq!(err.error, ParseError::UnexpectedEof);
+    }
+
+    fn limits_table(min: u32, max: Option<u32>) -> Table {
+        Table {
+            reftype: crate::sections::RefType::FuncRef,
+            limits: Limits { min, max },
+        }
+    }
+
+    #[test]
+    fn limits_min_greater_than_max_memory_rejected() {
+        // memory section bytes: 05 04 01 01 02 01 (min=2, max=1)
+        let bytes = [
+            0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x05, 0x04, 0x01, 0x01, 0x02, 0x01,
+        ];
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::LimitsMinGreaterThanMax {
+                kind: "memory",
+                min: 2,
+                max: 1
+            })
+        );
+    }
+
+    #[test]
+    fn limits_min_greater_than_max_table_rejected() {
+        // table section bytes: 04 05 01 70 01 05 01 (funcref, min=5, max=1)
+        let bytes = [
+            0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x04, 0x05, 0x01, 0x70, 0x01, 0x05,
+            0x01,
+        ];
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::LimitsMinGreaterThanMax {
+                kind: "table",
+                min: 5,
+                max: 1
+            })
+        );
+    }
+
+    #[test]
+    fn limits_min_greater_than_max_imports_rejected() {
+        let mem = Module {
+            imports: vec![Import {
+                module: "m".to_string(),
+                name: "mem".to_string(),
+                desc: ImportDesc::Memory(Limits {
+                    min: 3,
+                    max: Some(2),
+                }),
+            }],
+            ..Module::default()
+        };
+        assert_eq!(
+            mem.validate(),
+            Err(ValidationError::LimitsMinGreaterThanMax {
+                kind: "memory",
+                min: 3,
+                max: 2
+            })
+        );
+        let tbl = Module {
+            imports: vec![Import {
+                module: "m".to_string(),
+                name: "tbl".to_string(),
+                desc: ImportDesc::Table {
+                    reftype: crate::sections::RefType::FuncRef,
+                    limits: Limits {
+                        min: 4,
+                        max: Some(3),
+                    },
+                },
+            }],
+            ..Module::default()
+        };
+        assert_eq!(
+            tbl.validate(),
+            Err(ValidationError::LimitsMinGreaterThanMax {
+                kind: "table",
+                min: 4,
+                max: 3
+            })
+        );
+    }
+
+    #[test]
+    fn limits_min_equal_max_accepted() {
+        let module = Module {
+            tables: vec![limits_table(1, Some(1))],
+            memories: vec![Limits {
+                min: 2,
+                max: Some(2),
+            }],
+            imports: vec![Import {
+                module: "m".to_string(),
+                name: "mem".to_string(),
+                desc: ImportDesc::Memory(Limits {
+                    min: 0,
+                    max: Some(0),
+                }),
+            }],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
     }
 }
