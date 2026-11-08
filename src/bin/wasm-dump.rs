@@ -30,8 +30,18 @@ struct Flags {
 const DEFAULT_MAX_SIZE: u64 = 256 * 1024 * 1024;
 
 fn parse_max_size(v: Option<&String>) -> Result<u64, String> {
-    v.and_then(|s| s.parse::<u64>().ok())
-        .ok_or_else(|| "--max-size requires a byte count (non-negative integer)".to_string())
+    match v.and_then(|s| s.parse::<u64>().ok()) {
+        None => Err("--max-size requires a byte count (positive integer)".to_string()),
+        Some(0) => Err("--max-size must be at least 1".to_string()),
+        Some(n) => Ok(n),
+    }
+}
+
+fn print_usage() {
+    eprintln!(
+        "Usage: wasm-dump [--verbose|-v] [--validate] [--stats] [--timing] [--wat] [--explain] [--max-size <bytes>] <file.wasm>"
+    );
+    eprintln!("       wasm-dump --diff [--max-size <bytes>] <a.wasm> <b.wasm>");
 }
 
 /// Read a file, refusing inputs larger than `max` bytes.
@@ -115,6 +125,7 @@ fn main() {
                     Ok(v) => v,
                     Err(msg) => {
                         eprintln!("error: {}", msg);
+                        print_usage();
                         process::exit(1);
                     }
                 };
@@ -139,10 +150,7 @@ fn main() {
         Ok(v) => v,
         Err(msg) => {
             eprintln!("error: {}", msg);
-            eprintln!(
-                "Usage: wasm-dump [--verbose|-v] [--validate] [--stats] [--timing] [--wat] [--explain] [--max-size <bytes>] <file.wasm>"
-            );
-            eprintln!("       wasm-dump --diff [--max-size <bytes>] <a.wasm> <b.wasm>");
+            print_usage();
             process::exit(1);
         }
     };

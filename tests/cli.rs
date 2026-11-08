@@ -458,8 +458,59 @@ fn max_size_invalid_value_exits_one() {
 }
 
 #[test]
-fn default_limit_accepts_normal_file() {
-    wasm_dump().arg(MINIMAL_WASM).assert().success();
+fn max_size_zero_is_rejected() {
+    wasm_dump()
+        .args(["--max-size", "0", MINIMAL_WASM])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("--max-size must be at least 1"))
+        .stderr(predicate::str::contains("Usage:"));
+}
+
+#[test]
+fn diff_max_size_invalid_matches_single_output() {
+    wasm_dump()
+        .args(["--diff", "--max-size", "0", MINIMAL_WASM, MINIMAL_WASM])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("--max-size must be at least 1"))
+        .stderr(predicate::str::contains("Usage:"));
+}
+
+#[test]
+fn max_size_one_over_limit_is_rejected() {
+    let tmp = write_sized("max_size_plus1_177", 9);
+    wasm_dump()
+        .args(["--max-size", "8"])
+        .arg(tmp.0.to_str().unwrap())
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("exceeds the size limit"));
+}
+
+#[cfg(unix)]
+#[test]
+fn max_size_stdin_pipe_exact_is_accepted() {
+    wasm_dump()
+        .args(["--max-size", "8", "/dev/stdin"])
+        .write_stdin(b"\x00asm\x01\x00\x00\x00".to_vec())
+        .assert()
+        .success();
+}
+
+#[cfg(unix)]
+#[test]
+fn max_size_stdin_pipe_plus_one_is_rejected() {
+    wasm_dump()
+        .args(["--max-size", "8", "/dev/stdin"])
+        .write_stdin(b"\x00asm\x01\x00\x00\x00\x00".to_vec())
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("exceeds the size limit"));
 }
 
 #[test]
