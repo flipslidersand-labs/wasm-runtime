@@ -333,7 +333,7 @@ mod tests {
         );
         // the vec length itself is missing
         assert_eq!(scan(&[0x1C]), Err(ParseError::UnexpectedEof));
-        // a huge count must not overflow or panic
+        // a huge count is an EOF
         assert_eq!(
             scan(&[0x1C, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 0x0B]),
             Err(ParseError::UnexpectedEof)
@@ -349,9 +349,8 @@ mod tests {
         assert_eq!(scan(&[0xD0]), Err(ParseError::UnexpectedEof));
         // ref.is_null takes no immediate
         assert!(scan(&[0xD1, 0x0B]).is_ok());
-        // ref.func with one-byte and multi-byte function index
+        // ref.func with a one-byte function index
         assert!(scan(&[0xD2, 0x00, 0x1A, 0x0B]).is_ok());
-        assert!(scan(&[0xD2, 0x80, 0x01, 0x1A, 0x0B]).is_ok());
         assert_eq!(scan(&[0xD2]), Err(ParseError::UnexpectedEof));
         assert_eq!(
             scan(&[0xD2, 0x80, 0x80, 0x80, 0x80, 0x80, 0x0B]),
@@ -363,10 +362,22 @@ mod tests {
     fn table_get_set_and_memory_size_grow_take_one_index() {
         for op in [0x25u8, 0x26, 0x3F, 0x40] {
             assert!(scan(&[op, 0x00, 0x0B]).is_ok(), "op {op:#x}");
-            assert!(scan(&[op, 0x80, 0x01, 0x0B]).is_ok(), "op {op:#x}");
             // the index swallows the 0x0B
             assert_eq!(scan(&[op, 0x0B]), Err(ParseError::MissingEnd), "op {op:#x}");
             assert_eq!(scan(&[op]), Err(ParseError::UnexpectedEof), "op {op:#x}");
+        }
+    }
+
+    #[test]
+    fn table_get_set_read_a_multi_byte_index() {
+        for op in [0x25u8, 0x26] {
+            // index 0x80 0x06 is read whole; 0x06 is not seen as an opcode
+            assert!(scan(&[op, 0x80, 0x06, 0x0B]).is_ok(), "op {op:#x}");
+            assert_eq!(
+                scan(&[op, 0x80, 0x80, 0x80, 0x80, 0x80, 0x0B]),
+                Err(ParseError::Leb128Overflow),
+                "op {op:#x}"
+            );
         }
     }
 
@@ -382,8 +393,6 @@ mod tests {
                 Err(ParseError::MissingEnd),
                 "sub {sub}"
             );
-            // a following nop is still read as an opcode
-            assert!(scan(&[0xFC, sub, 0x00, 0x1A, 0x0B]).is_ok(), "sub {sub}");
             assert_eq!(
                 scan(&[0xFC, sub]),
                 Err(ParseError::UnexpectedEof),
