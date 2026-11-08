@@ -26,7 +26,8 @@ pub enum ElementInit {
 }
 
 /// An element segment (spec §5.5.12). Covers all eight binary encodings (flag
-/// 0..=7); flags ≥ 8 are rejected with [`ParseError::UnsupportedElementFlag`].
+/// 0..=7); flags ≥ 8 are rejected with [`ParseError::UnsupportedElementFlag`]
+/// (or [`ParseError::UnsupportedElementFlagWide`] above `0xFF`).
 #[derive(Debug, PartialEq, Clone)]
 pub struct ElementSegment {
     pub mode: ElementMode,
@@ -220,7 +221,12 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
                 }
             }
             // flags ≥ 8 are undefined; reject rather than silently misread.
-            _ => return Err(ParseError::UnsupportedElementFlag(flag as u8)),
+            _ => {
+                return Err(match u8::try_from(flag) {
+                    Ok(b) => ParseError::UnsupportedElementFlag(b),
+                    Err(_) => ParseError::UnsupportedElementFlagWide(flag),
+                })
+            }
         };
         segments.push(seg);
     }
