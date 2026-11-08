@@ -21,9 +21,15 @@ pub struct ExplainLine {
 
 impl fmt::Display for ExplainLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hex: Vec<String> = self.bytes.iter().map(|b| format!("{:02x}", b)).collect();
         // Show at most 8 hex bytes in the column; pad to fixed width.
-        let shown = hex[..hex.len().min(8)].join(" ");
+        // Only the shown prefix is formatted: payloads can be hundreds of MiB.
+        let hex: Vec<String> = self
+            .bytes
+            .iter()
+            .take(8)
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        let shown = hex.join(" ");
         let suffix = if self.bytes.len() > 8 { ".." } else { "" };
         write!(
             f,
@@ -60,7 +66,7 @@ pub fn explain_bytes_with_limit(bytes: &[u8], max_lines: usize) -> Vec<ExplainLi
 
 fn finish(mut c: Cursor) -> Vec<ExplainLine> {
     if c.truncated {
-        let offset = c.base + c.pos;
+        let offset = c.trunc_offset;
         c.lines.push(ExplainLine {
             offset,
             bytes: Vec::new(),
@@ -127,6 +133,9 @@ fn explain_inner(c: &mut Cursor, bytes: &[u8]) {
                                        // Skip LEB128 consumed bytes + payload.
                 c.pos += consumed + size as usize;
                 if c.lines.len() >= c.max_lines {
+                    if !c.truncated {
+                        c.trunc_offset = payload_start;
+                    }
                     c.truncated = true;
                 } else {
                     c.lines.push(ExplainLine {
@@ -303,6 +312,8 @@ struct Cursor<'a> {
     lines: Vec<ExplainLine>,
     max_lines: usize,
     truncated: bool,
+    /// Absolute offset where output was cut off (valid when `truncated`).
+    trunc_offset: usize,
 }
 
 impl<'a> Cursor<'a> {
@@ -318,11 +329,15 @@ impl<'a> Cursor<'a> {
             lines: Vec::new(),
             max_lines,
             truncated: false,
+            trunc_offset: 0,
         }
     }
 
     /// Merge a sub-cursor's lines (and truncation state) into this one.
     fn absorb(&mut self, sub: Cursor) {
+        if sub.truncated && !self.truncated {
+            self.trunc_offset = sub.trunc_offset;
+        }
         self.truncated |= sub.truncated;
         self.lines.extend(sub.lines);
     }
@@ -337,6 +352,9 @@ impl<'a> Cursor<'a> {
             return;
         }
         if self.lines.len() >= self.max_lines {
+            if !self.truncated {
+                self.trunc_offset = self.base + self.pos;
+            }
             self.truncated = true;
             return;
         }
@@ -429,12 +447,48 @@ mod tests {
     }
 
     #[test]
-    fn line_limit_stops_huge_declared_counts() {
-        // count = u32::MAX with few bytes: must terminate and be bounded
-        let payload = [0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 0x60, 0x00, 0x00];
-        let bytes = make_wasm(&[(1, &payload)]);
-        let lines = explain_bytes_with_limit(&bytes, 5);
-        assert!(lines.len() <= 6);
+    fn line_limit_stops_when_params_exceed_limit() {
+        // 1 functype with 1000 i32 params, limit 20 -> exactly limit + 1 lines
+        let mut payload = vec![0x01, 0x60, 0xE8, 0x07];
+        payload.extend(std::iter::repeat(0x7F).take(1000));
+        payload.push(0x00);
+        let bytes = make_wasm_long(1, &payload);
+        let lines = explain_bytes_with_limit(&bytes, 20);
+        assert_eq!(lines.len(), 21);
+        let last = lines.last().unwrap();
+        assert!(last.annotation.contains("output truncated"));
+        // offset points inside the section payload where output stopped,
+        // not at the section end
+        assert!(last.offset < bytes.len() - 900);
+    }
+
+    #[test]
+    fn display_of_huge_bytes_is_bounded() {
+        let line = ExplainLine {
+            offset: 0,
+            bytes: vec![0xAB; 1024 * 1024],
+            annotation: "x".into(),
+        };
+        let s = format!("{}", line);
+        assert!(s.len() < 100, "len = {}", s.len());
+        assert!(s.contains("ab ab ab ab ab ab ab ab .."));
+    }
+
+    fn make_wasm_long(id: u8, payload: &[u8]) -> Vec<u8> {
+        let mut b = header();
+        b.push(id);
+        let mut n = payload.len();
+        loop {
+            let byte = (n & 0x7F) as u8;
+            n >>= 7;
+            if n == 0 {
+                b.push(byte);
+                break;
+            }
+            b.push(byte | 0x80);
+        }
+        b.extend_from_slice(payload);
+        b
     }
 
     #[test]
