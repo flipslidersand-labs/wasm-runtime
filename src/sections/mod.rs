@@ -1537,4 +1537,126 @@ mod tests {
         assert_eq!(ConstExpr::I32(-5).to_string(), "-5");
         assert_eq!(ConstExpr::GlobalGet(2).to_string(), "global.get 2");
     }
+
+    // ---- Issue #193: truncated / unsupported init_expr paths ----
+
+    #[test]
+    fn const_expr_f32_truncated() {
+        // f32.const needs 4 payload bytes; only 3 present
+        assert_eq!(
+            parse_const_expr(&[0x43, 0x00, 0x00, 0x80]),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn const_expr_f64_truncated() {
+        // f64.const needs 8 payload bytes; only 7 present
+        assert_eq!(
+            parse_const_expr(&[0x44, 0, 0, 0, 0, 0, 0, 0xF0]),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn const_expr_trailing_bytes_after_end_ignored() {
+        // Current behavior: bytes after the first 0x0B are not inspected.
+        assert_eq!(
+            parse_const_expr(&[0x41, 0x01, 0x0B, 0xFF]),
+            Ok(ConstExpr::I32(1))
+        );
+    }
+
+    #[test]
+    fn const_expr_non_end_after_value_rejected() {
+        assert_eq!(
+            parse_const_expr(&[0x41, 0x01, 0x41]),
+            Err(ParseError::UnsupportedInitExpr(0x41))
+        );
+    }
+
+    #[test]
+    fn const_expr_rejects_ref_null_and_ref_func() {
+        assert_eq!(
+            parse_const_expr(&[0xD0, 0x70, 0x0B]),
+            Err(ParseError::UnsupportedInitExpr(0xD0))
+        );
+        assert_eq!(
+            parse_const_expr(&[0xD2, 0x00, 0x0B]),
+            Err(ParseError::UnsupportedInitExpr(0xD2))
+        );
+    }
+
+    #[test]
+    fn read_init_expr_accepts_ref_null_and_ref_func() {
+        let mut pos = 0;
+        assert_eq!(
+            read_init_expr(&[0xD0, 0x70, 0x0B], &mut pos),
+            Ok(vec![0xD0, 0x70, 0x0B])
+        );
+        assert_eq!(pos, 3);
+        let mut pos = 0;
+        assert_eq!(
+            read_init_expr(&[0xD2, 0x05, 0x0B], &mut pos),
+            Ok(vec![0xD2, 0x05, 0x0B])
+        );
+        assert_eq!(pos, 3);
+    }
+
+    #[test]
+    fn read_init_expr_truncated_floats() {
+        for bytes in [
+            &[0x43, 0, 0, 0x80][..],
+            &[0x44, 0, 0, 0, 0, 0, 0, 0xF0][..],
+            &[0xD0][..],
+            &[0xD2][..],
+        ] {
+            let mut pos = 0;
+            assert_eq!(
+                read_init_expr(bytes, &mut pos),
+                Err(ParseError::UnexpectedEof),
+                "{:02X?}",
+                bytes
+            );
+        }
+    }
+
+    #[test]
+    fn global_section_ref_init_exprs_rejected() {
+        // 1 global: i32, immutable, init = ref.null / ref.func
+        assert_eq!(
+            decode_global_section(&[0x01, 0x7F, 0x00, 0xD0, 0x70, 0x0B]),
+            Err(ParseError::UnsupportedInitExpr(0xD0))
+        );
+        assert_eq!(
+            decode_global_section(&[0x01, 0x7F, 0x00, 0xD2, 0x00, 0x0B]),
+            Err(ParseError::UnsupportedInitExpr(0xD2))
+        );
+    }
+
+    #[test]
+    fn data_offset_ref_init_exprs_rejected() {
+        // 1 segment, flag 0, offset = ref.null / ref.func, empty bytes
+        assert_eq!(
+            decode_data_section(&[0x01, 0x00, 0xD0, 0x70, 0x0B, 0x00]),
+            Err(ParseError::UnsupportedInitExpr(0xD0))
+        );
+        assert_eq!(
+            decode_data_section(&[0x01, 0x00, 0xD2, 0x00, 0x0B, 0x00]),
+            Err(ParseError::UnsupportedInitExpr(0xD2))
+        );
+    }
+
+    #[test]
+    fn element_offset_ref_init_exprs_rejected() {
+        // 1 segment, flag 0, offset = ref.null / ref.func, 0 funcidx
+        assert_eq!(
+            decode_element_section(&[0x01, 0x00, 0xD0, 0x70, 0x0B, 0x00]),
+            Err(ParseError::UnsupportedInitExpr(0xD0))
+        );
+        assert_eq!(
+            decode_element_section(&[0x01, 0x00, 0xD2, 0x00, 0x0B, 0x00]),
+            Err(ParseError::UnsupportedInitExpr(0xD2))
+        );
+    }
 }
