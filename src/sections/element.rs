@@ -79,9 +79,27 @@ fn read_expr_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<Vec<u8>>, ParseE
     *pos += n;
     let mut out = super::capped_vec(count, payload.len());
     for _ in 0..count {
-        out.push(super::read_init_expr(payload, pos)?);
+        let expr = super::read_init_expr(payload, pos)?;
+        validate_elem_expr(&expr)?;
+        out.push(expr);
     }
     Ok(out)
+}
+
+/// Checks that an element expr is exactly one const instruction plus `end`
+/// (`read_init_expr` alone accepts any run of const instructions).
+fn validate_elem_expr(bytes: &[u8]) -> Result<(), ParseError> {
+    // index of the expected `end` byte
+    let end_at = match bytes.first() {
+        Some(0xD0) => 2,
+        Some(0xD2) => 1 + decode_leb128_u32(bytes, 1)?.1,
+        _ => return parse_const_expr(bytes).map(|_| ()),
+    };
+    match bytes.get(end_at) {
+        Some(0x0B) if bytes.len() == end_at + 1 => Ok(()),
+        Some(&other) => Err(ParseError::UnsupportedInitExpr(other)),
+        None => Err(ParseError::UnexpectedEof),
+    }
 }
 
 /// Reads an `elemkind` byte, which must be `0x00` (funcref); anything else is
@@ -118,118 +136,118 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
         let (flag, n) = decode_leb128_u32(payload, pos)?;
         pos += n;
 
-        // The three low bits select the encoding: bit0 = passive/declarative,
-        // bit1 = explicit-table (active) or declarative selector, bit2 = the
-        // element list is a vector of exprs instead of funcidxs.
-        let seg = match flag {
-            // active, table 0, funcidx vector
-            0 => {
-                let ob = super::read_init_expr(payload, &mut pos)?;
-                let func_indices = read_u32_vec(payload, &mut pos)?;
-                ElementSegment {
-                    mode: ElementMode::Active {
-                        table_index: 0,
-                        offset: parse_const_expr(&ob)?,
-                    },
-                    reftype: RefType::FuncRef,
-                    init: ElementInit::FuncIndices(func_indices),
-                }
-            }
-            // passive, elemkind + funcidx vector
-            1 => {
-                let reftype = read_elemkind(payload, &mut pos)?;
-                let func_indices = read_u32_vec(payload, &mut pos)?;
-                ElementSegment {
-                    mode: ElementMode::Passive,
-                    reftype,
-                    init: ElementInit::FuncIndices(func_indices),
-                }
-            }
-            // active, explicit table, elemkind + funcidx vector
-            2 => {
-                let (table_index, n) = decode_leb128_u32(payload, pos)?;
-                pos += n;
-                let ob = super::read_init_expr(payload, &mut pos)?;
-                let reftype = read_elemkind(payload, &mut pos)?;
-                let func_indices = read_u32_vec(payload, &mut pos)?;
-                ElementSegment {
-                    mode: ElementMode::Active {
-                        table_index,
-                        offset: parse_const_expr(&ob)?,
-                    },
-                    reftype,
-                    init: ElementInit::FuncIndices(func_indices),
-                }
-            }
-            // declarative, elemkind + funcidx vector
-            3 => {
-                let reftype = read_elemkind(payload, &mut pos)?;
-                let func_indices = read_u32_vec(payload, &mut pos)?;
-                ElementSegment {
-                    mode: ElementMode::Declarative,
-                    reftype,
-                    init: ElementInit::FuncIndices(func_indices),
-                }
-            }
-            // active, table 0, expr vector (funcref implied)
-            4 => {
-                let ob = super::read_init_expr(payload, &mut pos)?;
-                let exprs = read_expr_vec(payload, &mut pos)?;
-                ElementSegment {
-                    mode: ElementMode::Active {
-                        table_index: 0,
-                        offset: parse_const_expr(&ob)?,
-                    },
-                    reftype: RefType::FuncRef,
-                    init: ElementInit::Exprs(exprs),
-                }
-            }
-            // passive, reftype + expr vector
-            5 => {
-                let reftype = read_reftype(payload, &mut pos)?;
-                let exprs = read_expr_vec(payload, &mut pos)?;
-                ElementSegment {
-                    mode: ElementMode::Passive,
-                    reftype,
-                    init: ElementInit::Exprs(exprs),
-                }
-            }
-            // active, explicit table, reftype + expr vector
-            6 => {
-                let (table_index, n) = decode_leb128_u32(payload, pos)?;
-                pos += n;
-                let ob = super::read_init_expr(payload, &mut pos)?;
-                let reftype = read_reftype(payload, &mut pos)?;
-                let exprs = read_expr_vec(payload, &mut pos)?;
-                ElementSegment {
-                    mode: ElementMode::Active {
-                        table_index,
-                        offset: parse_const_expr(&ob)?,
-                    },
-                    reftype,
-                    init: ElementInit::Exprs(exprs),
-                }
-            }
-            // declarative, reftype + expr vector
-            7 => {
-                let reftype = read_reftype(payload, &mut pos)?;
-                let exprs = read_expr_vec(payload, &mut pos)?;
-                ElementSegment {
-                    mode: ElementMode::Declarative,
-                    reftype,
-                    init: ElementInit::Exprs(exprs),
-                }
-            }
-            // flags ≥ 8 are undefined; reject rather than silently misread.
-            _ => {
-                return Err(match u8::try_from(flag) {
-                    Ok(b) => ParseError::UnsupportedElementFlag(b),
-                    Err(_) => ParseError::UnsupportedElementFlagWide(flag),
-                })
-            }
+        // Flags >= 8 are undefined; reject rather than silently misread.
+        if flag >= 8 {
+            return Err(match u8::try_from(flag) {
+                Ok(b) => ParseError::UnsupportedElementFlag(b),
+                Err(_) => ParseError::UnsupportedElementFlagWide(flag),
+            });
+        }
+
+        // The three low bits select the encoding (spec §5.5.12):
+        //   bits 0..=1: 0 = active, table 0     1 = passive
+        //               2 = active, explicit table   3 = declarative
+        //   bit 2     : element list is an expr vector (else a funcidx vector)
+        // Fields are read in binary order: table, offset, reftype/elemkind, list.
+        let kind = flag & 0b11;
+        let table_index = if kind == 2 {
+            let (t, n) = decode_leb128_u32(payload, pos)?;
+            pos += n;
+            t
+        } else {
+            0
+        };
+        let offset_bytes = if kind & 1 == 0 {
+            Some(super::read_init_expr(payload, &mut pos)?)
+        } else {
+            None
+        };
+        let is_exprs = flag & 0b100 != 0;
+        // Kinds 0 implies funcref; the others carry an explicit byte.
+        let reftype = match (kind, is_exprs) {
+            (0, _) => RefType::FuncRef,
+            (_, false) => read_elemkind(payload, &mut pos)?,
+            (_, true) => read_reftype(payload, &mut pos)?,
+        };
+        let init = if is_exprs {
+            ElementInit::Exprs(read_expr_vec(payload, &mut pos)?)
+        } else {
+            ElementInit::FuncIndices(read_u32_vec(payload, &mut pos)?)
+        };
+        // The offset is validated only after the list is read (error order).
+        let mode = match offset_bytes {
+            Some(ob) => ElementMode::Active {
+                table_index,
+                offset: parse_const_expr(&ob)?,
+            },
+            None if kind == 1 => ElementMode::Passive,
+            None => ElementMode::Declarative,
+        };
+        let seg = ElementSegment {
+            mode,
+            reftype,
+            init,
         };
         segments.push(seg);
     }
     super::ensure_consumed(payload, pos)?;
     Ok(segments)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One well-formed single-segment payload per flag 0..=7, followed by
+    /// malformed variants. The error (or Ok) result for every truncation point
+    /// is pinned so the flag-decoding order cannot drift.
+    fn cases() -> Vec<(&'static str, Vec<u8>)> {
+        vec![
+            ("f0", vec![1, 0, 0x41, 0, 0x0B, 1, 7]),
+            ("f1", vec![1, 1, 0, 1, 7]),
+            ("f2", vec![1, 2, 3, 0x41, 0, 0x0B, 0, 1, 7]),
+            ("f3", vec![1, 3, 0, 1, 7]),
+            ("f4", vec![1, 4, 0x41, 0, 0x0B, 1, 0xD2, 7, 0x0B]),
+            ("f5", vec![1, 5, 0x6F, 1, 0xD0, 0x6F, 0x0B]),
+            ("f6", vec![1, 6, 3, 0x41, 0, 0x0B, 0x70, 1, 0xD2, 7, 0x0B]),
+            ("f7", vec![1, 7, 0x70, 1, 0xD2, 7, 0x0B]),
+            // `ref.func 0 end` passes read_init_expr but parse_const_expr rejects
+            // it as an offset; that error must come after the element list is
+            // read, so every truncation inside the list is UnexpectedEof.
+            ("f0_badoff", vec![1, 0, 0xD2, 0, 0x0B, 1, 7]),
+            ("f2_badoff", vec![1, 2, 3, 0xD2, 0, 0x0B, 0, 1, 7]),
+            ("f4_badoff", vec![1, 4, 0xD2, 0, 0x0B, 1, 0xD2, 7, 0x0B]),
+            (
+                "f6_badoff",
+                vec![1, 6, 3, 0xD2, 0, 0x0B, 0x70, 1, 0xD2, 7, 0x0B],
+            ),
+            ("f0_badoff_badvec", vec![1, 0, 0xD2, 0, 0x0B, 2, 7]),
+            ("f1_badkind", vec![1, 1, 9, 1, 7]),
+            ("f2_badkind", vec![1, 2, 3, 0x41, 0, 0x0B, 9, 1, 7]),
+            ("f3_badkind", vec![1, 3, 9, 1, 7]),
+            ("f5_badtype", vec![1, 5, 0x71, 1, 0xD0, 0x6F, 0x0B]),
+            (
+                "f6_badtype",
+                vec![1, 6, 3, 0x41, 0, 0x0B, 0x71, 1, 0xD2, 7, 0x0B],
+            ),
+            ("f7_badtype", vec![1, 7, 0x71, 1, 0xD2, 7, 0x0B]),
+            ("f8", vec![1, 8]),
+            ("trailing", vec![1, 3, 0, 1, 7, 0xAA]),
+        ]
+    }
+
+    #[test]
+    fn element_flag_decoding_is_pinned() {
+        let mut out = String::new();
+        for (name, payload) in cases() {
+            for len in 0..=payload.len() {
+                out.push_str(&format!(
+                    "{name}[{len}]: {:?}\n",
+                    decode_element_section(&payload[..len])
+                ));
+            }
+        }
+        let expected = include_str!("element_flags.expected");
+        assert_eq!(out, expected);
+    }
 }

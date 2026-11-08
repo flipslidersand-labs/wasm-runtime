@@ -148,8 +148,14 @@ fn read_global_type(payload: &[u8], pos: &mut usize) -> Result<GlobalType, Parse
     Ok(GlobalType { valtype, mutable })
 }
 
-fn skip_leb128(payload: &[u8], pos: &mut usize) -> Result<(), ParseError> {
+/// Skips one LEB128 value of at most `max_len` bytes (5 for u32/i32, 10 for i64).
+fn skip_leb128(payload: &[u8], pos: &mut usize, max_len: usize) -> Result<(), ParseError> {
+    let mut len = 0;
     loop {
+        if len == max_len {
+            return Err(ParseError::Leb128Overflow);
+        }
+        len += 1;
         if *pos >= payload.len() {
             return Err(ParseError::UnexpectedEof);
         }
@@ -182,12 +188,13 @@ fn read_init_expr(payload: &[u8], pos: &mut usize) -> Result<Vec<u8>, ParseError
         let op = payload[*pos];
         *pos += 1;
         match op {
-            0x0B => break,                                    // end
-            0x41 | 0x42 | 0x23 => skip_leb128(payload, pos)?, // i32/i64.const, global.get
-            0x43 => advance(payload, pos, 4)?,                // f32.const
-            0x44 => advance(payload, pos, 8)?,                // f64.const
-            0xD2 => skip_leb128(payload, pos)?,               // ref.func funcidx
-            0xD0 => advance(payload, pos, 1)?,                // ref.null heaptype
+            0x0B => break,                                // end
+            0x41 | 0x23 => skip_leb128(payload, pos, 5)?, // i32.const, global.get
+            0x42 => skip_leb128(payload, pos, 10)?,       // i64.const
+            0x43 => advance(payload, pos, 4)?,            // f32.const
+            0x44 => advance(payload, pos, 8)?,            // f64.const
+            0xD2 => skip_leb128(payload, pos, 5)?,        // ref.func funcidx
+            0xD0 => advance(payload, pos, 1)?,            // ref.null heaptype
             _ => return Err(ParseError::UnsupportedInitExpr(op)),
         }
     }
@@ -1829,5 +1836,54 @@ mod tests {
             decode_element_section(&[0x01, 0x00, 0xD2, 0x00, 0x0B, 0x00]),
             Err(ParseError::UnsupportedInitExpr(0xD2))
         );
+    }
+
+    #[test]
+    fn element_expr_with_multiple_instructions_rejected() {
+        // 1 segment, flag 5, funcref, 1 expr = i32.const 0; i32.const 0; end
+        assert_eq!(
+            decode_element_section(&[0x01, 0x05, 0x70, 0x01, 0x41, 0x00, 0x41, 0x00, 0x0B]),
+            Err(ParseError::UnsupportedInitExpr(0x41))
+        );
+        // ref.null followed by another instruction
+        assert_eq!(
+            decode_element_section(&[0x01, 0x05, 0x70, 0x01, 0xD0, 0x70, 0xD2, 0x00, 0x0B]),
+            Err(ParseError::UnsupportedInitExpr(0xD2))
+        );
+    }
+
+    #[test]
+    fn element_expr_valid_single_instructions_accepted() {
+        for expr in [
+            &[0xD0, 0x70, 0x0B][..],
+            &[0xD2, 0x00, 0x0B][..],
+            &[0x23, 0x00, 0x0B][..],
+            &[0x41, 0x00, 0x0B][..],
+        ] {
+            let mut bytes = vec![0x01, 0x05, 0x70, 0x01];
+            bytes.extend_from_slice(expr);
+            assert!(decode_element_section(&bytes).is_ok(), "{:02X?}", expr);
+        }
+    }
+
+    #[test]
+    fn init_expr_overlong_leb128_rejected() {
+        // i32.const with a 6-byte LEB128
+        assert_eq!(
+            decode_element_section(&[
+                0x01, 0x05, 0x70, 0x01, 0x41, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00, 0x0B
+            ]),
+            Err(ParseError::Leb128Overflow)
+        );
+        // i64.const with an 11-byte LEB128 (global init)
+        let mut g = vec![0x01, 0x7E, 0x00, 0x42];
+        g.extend_from_slice(&[0x80; 10]);
+        g.extend_from_slice(&[0x00, 0x0B]);
+        assert_eq!(decode_global_section(&g), Err(ParseError::Leb128Overflow));
+        // i64.const with a 10-byte LEB128 is fine for the scanner
+        let mut ok = vec![0x01, 0x7E, 0x00, 0x42];
+        ok.extend_from_slice(&[0x80; 9]);
+        ok.extend_from_slice(&[0x00, 0x0B]);
+        assert!(decode_global_section(&ok).is_ok());
     }
 }
