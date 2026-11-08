@@ -504,4 +504,43 @@ mod tests {
         let payload = [0x01, 0x04, 0x00, 0x41, 0x01, 0x1A];
         assert_eq!(decode_code_section(&payload), Err(ParseError::MissingEnd));
     }
+
+    #[test]
+    fn leb_and_fixed_immediate_boundaries() {
+        // exactly max-length LEBs (5 for i32, 10 for i64)
+        assert!(scan(&[0x41, 0x80, 0x80, 0x80, 0x80, 0x00, 0x1A, 0x0B]).is_ok());
+        let mut ok = vec![0x42];
+        ok.extend([0x80; 9]);
+        ok.extend([0x00, 0x1A, 0x0B]);
+        assert!(scan(&ok).is_ok());
+        // one byte past max
+        assert_eq!(
+            scan(&[0x41, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00, 0x1A, 0x0B]),
+            Err(ParseError::Leb128Overflow)
+        );
+        let mut long = vec![0x42];
+        long.extend([0x80; 10]);
+        long.extend([0x00, 0x1A, 0x0B]);
+        assert_eq!(scan(&long), Err(ParseError::Leb128Overflow));
+        // max continuation bytes then EOF: overflow wins
+        assert_eq!(
+            scan(&[0x41, 0x80, 0x80, 0x80, 0x80, 0x80]),
+            Err(ParseError::Leb128Overflow)
+        );
+        // fewer than max then EOF
+        assert_eq!(scan(&[0x41, 0x80]), Err(ParseError::UnexpectedEof));
+        // fixed bytes: f32 short, f64 short, ref.null short
+        assert_eq!(scan(&[0x43, 0, 0, 0]), Err(ParseError::UnexpectedEof));
+        assert_eq!(
+            scan(&[0x44, 0, 0, 0, 0, 0, 0, 0]),
+            Err(ParseError::UnexpectedEof)
+        );
+        assert_eq!(scan(&[0xD0]), Err(ParseError::UnexpectedEof));
+        // select t* with a count larger than the remaining bytes, and u32::MAX
+        assert_eq!(scan(&[0x1C, 0x05, 0x7F]), Err(ParseError::UnexpectedEof));
+        assert_eq!(
+            scan(&[0x1C, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 0x7F]),
+            Err(ParseError::UnexpectedEof)
+        );
+    }
 }

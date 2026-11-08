@@ -1793,6 +1793,41 @@ mod tests {
     }
 
     #[test]
+    fn read_init_expr_leb_and_fixed_boundaries() {
+        let run = |b: &[u8]| {
+            let mut pos = 0;
+            read_init_expr(b, &mut pos).map(|v| (v.len(), pos))
+        };
+        // exactly max-length LEBs are accepted (5 for i32, 10 for i64)
+        assert_eq!(run(&[0x41, 0x80, 0x80, 0x80, 0x80, 0x00, 0x0B]), Ok((7, 7)));
+        let mut i64c = vec![0x42];
+        i64c.extend([0x80; 9]);
+        i64c.extend([0x00, 0x0B]);
+        assert_eq!(run(&i64c), Ok((12, 12)));
+        // one byte past max
+        assert_eq!(
+            run(&[0x41, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00, 0x0B]),
+            Err(ParseError::Leb128Overflow)
+        );
+        let mut long = vec![0x42];
+        long.extend([0x80; 10]);
+        long.extend([0x00, 0x0B]);
+        assert_eq!(run(&long), Err(ParseError::Leb128Overflow));
+        // max continuation bytes then EOF: overflow wins over EOF
+        assert_eq!(
+            run(&[0x41, 0x80, 0x80, 0x80, 0x80, 0x80]),
+            Err(ParseError::Leb128Overflow)
+        );
+        // fewer than max continuation bytes then EOF
+        assert_eq!(run(&[0x41, 0x80, 0x80]), Err(ParseError::UnexpectedEof));
+        assert_eq!(run(&[0x23]), Err(ParseError::UnexpectedEof));
+        // fixed-size operands exactly fitting / one short
+        assert_eq!(run(&[0x43, 0, 0, 0, 0, 0x0B]), Ok((6, 6)));
+        assert_eq!(run(&[0x43, 0, 0, 0]), Err(ParseError::UnexpectedEof));
+        assert_eq!(run(&[0xD0, 0x70, 0x0B]), Ok((3, 3)));
+    }
+
+    #[test]
     fn global_section_ref_init_exprs_rejected() {
         // reference-types is unsupported, so this is UnsupportedInitExpr for now;
         // update here when it is supported.
