@@ -16,7 +16,7 @@ fn wat_string(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
-            c if (c as u32) < 0x20 || c as u32 == 0x7F => {
+            c if crate::sections::is_unsafe_char(c) => {
                 out.push_str(&format!("\\u{{{:02x}}}", c as u32));
             }
             c => out.push(c),
@@ -439,5 +439,11 @@ mod tests {
         assert_eq!(wat_string("plain"), "plain");
         assert_eq!(wat_string("\u{0}\u{1f}\u{7f}"), "\\u{00}\\u{1f}\\u{7f}");
         assert_eq!(wat_string("é"), "é");
+        assert_eq!(wat_string("\u{85}\u{9f}"), "\\u{85}\\u{9f}");
+        assert_eq!(
+            wat_string("\u{202a}\u{202e}\u{2066}\u{2069}"),
+            "\\u{202a}\\u{202e}\\u{2066}\\u{2069}"
+        );
+        assert_eq!(wat_string("a\\nb\""), "a\\\\nb\\\"");
     }
 }
