@@ -441,3 +441,11 @@ fn parse_module_invalid_magic_returns_error() {
 fn parse_module_empty_bytes_returns_eof() {
     assert_eq!(parse_module(&[]), Err(ParseError::UnexpectedEof));
 }
+
+#[test]
+fn display_unsupported_wide_flags() {
+    let msg = format!("{}", ParseError::UnsupportedDataFlagWide(0x100));
+    assert_eq!(msg, "unsupported data segment flag: 0x100");
+    let msg = format!("{}", ParseError::UnsupportedElementFlagWide(0x100));
+    assert_eq!(msg, "unsupported element segment flag: 0x100");
+}

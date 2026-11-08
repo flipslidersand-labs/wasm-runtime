@@ -71,7 +71,12 @@ pub fn decode_data_section(payload: &[u8]) -> Result<Vec<DataSegment>, ParseErro
                     offset: parse_const_expr(&ob)?,
                 }
             }
-            _ => return Err(ParseError::UnsupportedDataFlag(flag as u8)),
+            _ => {
+                return Err(match u8::try_from(flag) {
+                    Ok(b) => ParseError::UnsupportedDataFlag(b),
+                    Err(_) => ParseError::UnsupportedDataFlagWide(flag),
+                })
+            }
         };
 
         let bytes = super::read_byte_vec(payload, &mut pos)?;
