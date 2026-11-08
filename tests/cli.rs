@@ -696,3 +696,24 @@ fn backslash_quote_c1_and_bidi_in_names_are_escaped() {
         assert!(!stdout.contains(c), "raw {c:?} in stdout:\n{stdout}");
     }
 }
+
+#[test]
+fn bidi_marks_and_line_separators_in_names_are_escaped() {
+    let mut m = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+    let mut exp = vec![1];
+    exp.extend(name_bytes("m\u{200e}\u{200f}\u{61c}\u{2028}\u{2029}x"));
+    exp.extend([0x00, 0x00]);
+    m.extend(section(7, &exp));
+    let path = std::env::temp_dir().join(format!("wasm-dump-190-{}.wasm", std::process::id()));
+    std::fs::write(&path, m).unwrap();
+    let out = wasm_dump().arg("--verbose").arg(&path).output().unwrap();
+    std::fs::remove_file(&path).ok();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        stdout.contains("m\\u{200e}\\u{200f}\\u{61c}\\u{2028}\\u{2029}x"),
+        "{stdout}"
+    );
+    for c in ['\u{200e}', '\u{200f}', '\u{61c}', '\u{2028}', '\u{2029}'] {
+        assert!(!stdout.contains(c), "raw {c:?} in stdout:\n{stdout}");
+    }
+}
