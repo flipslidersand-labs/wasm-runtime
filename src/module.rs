@@ -191,6 +191,12 @@ pub enum ValidationError {
     DataCountMismatch { declared: u32, actual: usize },
     /// A function uses `memory.init` or `data.drop`, which need a datacount section.
     DataCountRequired,
+    /// A memory or table declares `min` greater than `max`.
+    LimitsMinGreaterThanMax {
+        kind: &'static str,
+        min: u32,
+        max: u32,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -239,6 +245,11 @@ impl fmt::Display for ValidationError {
             ValidationError::DataCountRequired => write!(
                 f,
                 "memory.init or data.drop is used but there is no datacount section"
+            ),
+            ValidationError::LimitsMinGreaterThanMax { kind, min, max } => write!(
+                f,
+                "{} size minimum {} must not be greater than maximum {}",
+                kind, min, max
             ),
         }
     }
@@ -294,6 +305,29 @@ impl Module {
                     index: type_index,
                     type_count,
                 });
+            }
+        }
+
+        // 2c. limits of imported and locally-defined tables/memories need min <= max.
+        let imported_limits = self.imports.iter().filter_map(|i| match &i.desc {
+            ImportDesc::Table { limits, .. } => Some(("table", limits)),
+            ImportDesc::Memory(limits) => Some(("memory", limits)),
+            _ => None,
+        });
+        let local_limits = self
+            .tables
+            .iter()
+            .map(|t| ("table", &t.limits))
+            .chain(self.memories.iter().map(|m| ("memory", m)));
+        for (kind, limits) in imported_limits.chain(local_limits) {
+            if let Some(max) = limits.max {
+                if limits.min > max {
+                    return Err(ValidationError::LimitsMinGreaterThanMax {
+                        kind,
+                        min: limits.min,
+                        max,
+                    });
+                }
             }
         }
 
@@ -800,5 +834,113 @@ mod tests {
         bytes.push(0x00);
         let err = parse_module_with_context(&bytes).unwrap_err();
         assert_eq!(err.error, ParseError::UnexpectedEof);
+    }
+
+    fn limits_table(min: u32, max: Option<u32>) -> Table {
+        Table {
+            reftype: crate::sections::RefType::FuncRef,
+            limits: Limits { min, max },
+        }
+    }
+
+    #[test]
+    fn limits_min_greater_than_max_memory_rejected() {
+        // memory section bytes: 05 04 01 01 02 01 (min=2, max=1)
+        let bytes = [
+            0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x05, 0x04, 0x01, 0x01, 0x02, 0x01,
+        ];
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::LimitsMinGreaterThanMax {
+                kind: "memory",
+                min: 2,
+                max: 1
+            })
+        );
+    }
+
+    #[test]
+    fn limits_min_greater_than_max_table_rejected() {
+        // table section bytes: 04 05 01 70 01 05 01 (funcref, min=5, max=1)
+        let bytes = [
+            0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x04, 0x05, 0x01, 0x70, 0x01, 0x05,
+            0x01,
+        ];
+        let module = parse_module(&bytes).unwrap();
+        assert_eq!(
+            module.validate(),
+            Err(ValidationError::LimitsMinGreaterThanMax {
+                kind: "table",
+                min: 5,
+                max: 1
+            })
+        );
+    }
+
+    #[test]
+    fn limits_min_greater_than_max_imports_rejected() {
+        let mem = Module {
+            imports: vec![Import {
+                module: "m".to_string(),
+                name: "mem".to_string(),
+                desc: ImportDesc::Memory(Limits {
+                    min: 3,
+                    max: Some(2),
+                }),
+            }],
+            ..Module::default()
+        };
+        assert_eq!(
+            mem.validate(),
+            Err(ValidationError::LimitsMinGreaterThanMax {
+                kind: "memory",
+                min: 3,
+                max: 2
+            })
+        );
+        let tbl = Module {
+            imports: vec![Import {
+                module: "m".to_string(),
+                name: "tbl".to_string(),
+                desc: ImportDesc::Table {
+                    reftype: crate::sections::RefType::FuncRef,
+                    limits: Limits {
+                        min: 4,
+                        max: Some(3),
+                    },
+                },
+            }],
+            ..Module::default()
+        };
+        assert_eq!(
+            tbl.validate(),
+            Err(ValidationError::LimitsMinGreaterThanMax {
+                kind: "table",
+                min: 4,
+                max: 3
+            })
+        );
+    }
+
+    #[test]
+    fn limits_min_equal_max_accepted() {
+        let module = Module {
+            tables: vec![limits_table(1, Some(1))],
+            memories: vec![Limits {
+                min: 2,
+                max: Some(2),
+            }],
+            imports: vec![Import {
+                module: "m".to_string(),
+                name: "mem".to_string(),
+                desc: ImportDesc::Memory(Limits {
+                    min: 0,
+                    max: Some(0),
+                }),
+            }],
+            ..Module::default()
+        };
+        assert_eq!(module.validate(), Ok(()));
     }
 }
