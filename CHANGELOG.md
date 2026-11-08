@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ValidationError::LimitsMinGreaterThanMax`: memory/table limits with `min > max` (PR #174)
 - Conformance tests against the official WebAssembly testsuite, with a tracked baseline of expected failures; skipped unless `SPEC_TESTSUITE_DIR` and `wasm-tools` are available (PR #151)
 - Architecture Decision Records for three design decisions, listed in the README (PR #149)
+- `parse_module_with_options` and `ParseOptions`: a single entry point that combines the section-event hook with `ParseErrorContext` errors; `parse_module`, `parse_module_with_events` and `parse_module_with_context` are unchanged thin wrappers (#196, PR #213)
 
 ### Changed
 - `ValidationError` is now `#[non_exhaustive]`: downstream `match` needs a wildcard arm (#191)
@@ -47,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `parse_header`: replaced `try_into().unwrap()` with direct byte indexing to eliminate hidden panics (#65, PR #76)
 - `decode_const_expr`: same unwrap removal for f32/f64 byte array construction (#65, PR #76)
 - Use `checked_add` for length/offset arithmetic in `read_name`, `read_byte_vec`, export/code section decoders and `explain` so oversized LEB128 lengths no longer overflow `usize` on 32-bit targets (#202)
+- `--explain` output is capped at 100,000 lines (a final `output truncated` line marks the cut) and hex previews no longer format whole payloads; section decoders pre-allocate at most 1 MiB, accounting for element size, so crafted counts cannot inflate memory (#200, PR #211)
 - `section_iter` validates the declared section size against the remaining bytes, returning `UnexpectedEof` instead of panicking on truncated input (#111, PR #126)
 - Section decoders clamp LEB128 `count` allocation by payload length, so a huge count with a tiny payload no longer over-allocates (#119, PR #136)
 - `decode_leb128_signed` rejects non-sign-extended unused bits in the final byte with `Leb128Overflow` (PR #171)
