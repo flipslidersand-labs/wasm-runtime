@@ -202,6 +202,9 @@ fn main() {
     println!("sections:");
 
     let mut decode_errors = 0usize;
+    // Per-section `--verbose` detail, collected during the listing pass so each
+    // section is decoded exactly once.
+    let mut details: Vec<(u8, u32, String)> = Vec::new();
     for result in section_iter(&bytes) {
         let hdr = match result {
             Ok(h) => h,
@@ -218,102 +221,17 @@ fn main() {
             section_name(hdr.id),
             hdr.size
         );
-        match hdr.id {
-            0 => match decode_custom_section(payload) {
-                Ok(c) => {
-                    print!("  (name \"{}\")", display_name(&c.name));
-                    if c.name == "name" {
-                        match decode_name_section(&c.bytes) {
-                            Ok(ns) => {
-                                if !ns.functions.is_empty() {
-                                    print!("  ({} func names)", ns.functions.len());
-                                }
-                            }
-                            Err(e) => {
-                                print!("  (decode error: {})", e);
-                                decode_errors += 1;
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    print!("  (decode error: {})", e);
-                    decode_errors += 1;
-                }
-            },
-            1 => print_count(
-                decode_type_section(payload).map(|v| v.len()),
-                "types",
-                &mut decode_errors,
-            ),
-            2 => print_count(
-                decode_import_section(payload).map(|v| v.len()),
-                "imports",
-                &mut decode_errors,
-            ),
-            3 => print_count(
-                decode_function_section(payload).map(|v| v.len()),
-                "funcs",
-                &mut decode_errors,
-            ),
-            4 => print_count(
-                decode_table_section(payload).map(|v| v.len()),
-                "tables",
-                &mut decode_errors,
-            ),
-            5 => print_count(
-                decode_memory_section(payload).map(|v| v.len()),
-                "mems",
-                &mut decode_errors,
-            ),
-            6 => print_count(
-                decode_global_section(payload).map(|v| v.len()),
-                "globals",
-                &mut decode_errors,
-            ),
-            7 => print_count(
-                decode_export_section(payload).map(|v| v.len()),
-                "exports",
-                &mut decode_errors,
-            ),
-            8 => match decode_start_section(payload) {
-                Ok(idx) => print!("  (func {})", idx),
-                Err(e) => {
-                    print!("  (decode error: {})", e);
-                    decode_errors += 1;
-                }
-            },
-            9 => print_count(
-                decode_element_section(payload).map(|v| v.len()),
-                "elems",
-                &mut decode_errors,
-            ),
-            10 => print_count(
-                decode_code_section(payload).map(|v| v.len()),
-                "funcs",
-                &mut decode_errors,
-            ),
-            11 => print_count(
-                decode_data_section(payload).map(|v| v.len()),
-                "data",
-                &mut decode_errors,
-            ),
-            12 => match decode_datacount_section(payload) {
-                Ok(count) => print!("  (count {})", count),
-                Err(e) => {
-                    print!("  (decode error: {})", e);
-                    decode_errors += 1;
-                }
-            },
-            _ => {}
-        }
+        let section = describe_section(hdr.id, payload, flags.verbose);
+        print!("{}", section.summary);
+        decode_errors += section.errors;
         println!();
+        if flags.verbose {
+            details.push((hdr.id, hdr.size, section.detail));
+        }
     }
 
     if flags.verbose {
-        // The same sections were already counted by the listing; only keep
-        // the larger count so a failure is never reported twice.
-        decode_errors = decode_errors.max(print_verbose(&bytes));
+        print_verbose(&details);
     }
 
     // --explain is a byte-level walkthrough, so decode errors do not change
@@ -406,103 +324,120 @@ fn run_diff(path_a: &str, path_b: &str, max_size: u64) {
     println!("\n{}", diff_summary(&diffs));
 }
 
-fn print_count(res: Result<usize, ParseError>, noun: &str, errors: &mut usize) {
-    match res {
-        Ok(n) => print!("  ({} {})", n, noun),
-        Err(e) => {
-            print!("  (decode error: {})", e);
-            *errors += 1;
+/// One section's decoded view: the `(..)` suffix of the listing line, the
+/// `--verbose` body (built only when requested), and how many decode errors
+/// occurred.
+#[derive(Default)]
+struct Described {
+    summary: String,
+    detail: String,
+    errors: usize,
+}
+
+impl Described {
+    fn fail(&mut self, e: ParseError) {
+        self.summary.push_str(&format!("  (decode error: {})", e));
+        self.detail.push_str(&format!("  <decode error: {}>\n", e));
+        self.errors += 1;
+    }
+
+    /// A section holding a list: summary `(N noun)`, detail `[i] item` lines.
+    fn list<T: std::fmt::Display>(
+        &mut self,
+        res: Result<Vec<T>, ParseError>,
+        noun: &str,
+        verbose: bool,
+    ) {
+        match res {
+            Ok(items) => {
+                self.summary
+                    .push_str(&format!("  ({} {})", items.len(), noun));
+                if verbose {
+                    for (i, item) in items.iter().enumerate() {
+                        self.detail.push_str(&format!("  [{}] {}\n", i, item));
+                    }
+                }
+            }
+            Err(e) => self.fail(e),
         }
     }
 }
 
-/// Prints each section's decoded contents in a human-readable form.
-/// Returns the number of sections that failed to decode.
-fn print_verbose(bytes: &[u8]) -> usize {
-    let mut errors = 0usize;
-    for result in section_iter(bytes) {
-        let hdr = match result {
-            Ok(h) => h,
-            Err(_) => return errors,
-        };
-        let payload = &bytes[hdr.offset..hdr.offset + hdr.size as usize];
-
-        println!(
-            "\nSection[{}] {} ({} bytes)",
-            hdr.id,
-            section_title(hdr.id),
-            hdr.size
-        );
-
-        match hdr.id {
-            0 => match decode_custom_section(payload) {
-                Ok(c) if c.name == "name" => {
-                    println!("  {}", c);
+/// The single section-id -> decoder dispatch of this tool: decodes `payload`
+/// once and renders both the listing summary and the verbose detail.
+fn describe_section(id: u8, payload: &[u8], verbose: bool) -> Described {
+    let mut d = Described::default();
+    match id {
+        0 => match decode_custom_section(payload) {
+            Ok(c) => {
+                d.summary
+                    .push_str(&format!("  (name \"{}\")", display_name(&c.name)));
+                d.detail.push_str(&format!("  {}\n", c));
+                if c.name == "name" {
                     match decode_name_section(&c.bytes) {
-                        Ok(ns) => print!("{}", ns),
+                        Ok(ns) => {
+                            if !ns.functions.is_empty() {
+                                d.summary
+                                    .push_str(&format!("  ({} func names)", ns.functions.len()));
+                            }
+                            d.detail.push_str(&ns.to_string());
+                        }
                         Err(e) => {
-                            errors += 1;
-                            println!("  <name section decode error: {}>", e)
+                            d.summary.push_str(&format!("  (decode error: {})", e));
+                            d.detail
+                                .push_str(&format!("  <name section decode error: {}>\n", e));
+                            d.errors += 1;
                         }
                     }
                 }
-                Ok(c) => println!("  {}", c),
-                Err(e) => {
-                    errors += 1;
-                    println!("  <decode error: {}>", e)
+            }
+            Err(e) => d.fail(e),
+        },
+        1 => d.list(decode_type_section(payload), "types", verbose),
+        2 => d.list(decode_import_section(payload), "imports", verbose),
+        3 => match decode_function_section(payload) {
+            Ok(indices) => {
+                d.summary.push_str(&format!("  ({} funcs)", indices.len()));
+                for (i, idx) in indices.iter().enumerate() {
+                    d.detail.push_str(&format!("  [{}] type[{}]\n", i, idx));
                 }
-            },
-            1 => print_entries(decode_type_section(payload), &mut errors),
-            2 => print_entries(decode_import_section(payload), &mut errors),
-            3 => match decode_function_section(payload) {
-                Ok(indices) => {
-                    for (i, idx) in indices.iter().enumerate() {
-                        println!("  [{}] type[{}]", i, idx);
-                    }
-                }
-                Err(e) => {
-                    errors += 1;
-                    println!("  <decode error: {}>", e)
-                }
-            },
-            4 => print_entries(decode_table_section(payload), &mut errors),
-            5 => print_entries(decode_memory_section(payload), &mut errors),
-            6 => print_entries(decode_global_section(payload), &mut errors),
-            7 => print_entries(decode_export_section(payload), &mut errors),
-            8 => match decode_start_section(payload) {
-                Ok(idx) => println!("  start: func[{}]", idx),
-                Err(e) => {
-                    errors += 1;
-                    println!("  <decode error: {}>", e)
-                }
-            },
-            9 => print_entries(decode_element_section(payload), &mut errors),
-            10 => print_entries(decode_code_section(payload), &mut errors),
-            11 => print_entries(decode_data_section(payload), &mut errors),
-            12 => match decode_datacount_section(payload) {
-                Ok(count) => println!("  datacount: {}", count),
-                Err(e) => {
-                    errors += 1;
-                    println!("  <decode error: {}>", e)
-                }
-            },
-            _ => {}
-        }
+            }
+            Err(e) => d.fail(e),
+        },
+        4 => d.list(decode_table_section(payload), "tables", verbose),
+        5 => d.list(decode_memory_section(payload), "mems", verbose),
+        6 => d.list(decode_global_section(payload), "globals", verbose),
+        7 => d.list(decode_export_section(payload), "exports", verbose),
+        8 => match decode_start_section(payload) {
+            Ok(idx) => {
+                d.summary.push_str(&format!("  (func {})", idx));
+                d.detail.push_str(&format!("  start: func[{}]\n", idx));
+            }
+            Err(e) => d.fail(e),
+        },
+        9 => d.list(decode_element_section(payload), "elems", verbose),
+        10 => d.list(decode_code_section(payload), "funcs", verbose),
+        11 => d.list(decode_data_section(payload), "data", verbose),
+        12 => match decode_datacount_section(payload) {
+            Ok(count) => {
+                d.summary.push_str(&format!("  (count {})", count));
+                d.detail.push_str(&format!("  datacount: {}\n", count));
+            }
+            Err(e) => d.fail(e),
+        },
+        _ => {}
     }
-    errors
+    if !verbose {
+        d.detail.clear();
+    }
+    d
 }
 
-fn print_entries<T: std::fmt::Display>(res: Result<Vec<T>, ParseError>, errors: &mut usize) {
-    match res {
-        Ok(items) => {
-            for (i, item) in items.iter().enumerate() {
-                println!("  [{}] {}", i, item);
-            }
-        }
-        Err(e) => {
-            *errors += 1;
-            println!("  <decode error: {}>", e)
-        }
+/// Prints each section's collected `--verbose` detail.
+fn print_verbose(details: &[(u8, u32, String)]) {
+    for (id, size, detail) in details {
+        println!("\nSection[{}] {} ({} bytes)", id, section_title(*id), size);
+        print!("{}", detail);
     }
 }
 
