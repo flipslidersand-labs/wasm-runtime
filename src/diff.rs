@@ -1,7 +1,7 @@
 //! Section-level diff between two wasm binaries.
 
 use crate::module::section_name;
-use crate::parser::{section_iter, ParseError};
+use crate::parser::{parse_header, section_iter, ParseError};
 use std::fmt;
 
 /// Status of a section when comparing two wasm binaries.
@@ -116,6 +116,7 @@ pub fn diff_summary(diffs: &[SectionDiff]) -> String {
 /// If the same id appears multiple times (e.g. custom sections), the last
 /// size wins — for diff purposes this is sufficient.
 fn collect_sections(bytes: &[u8]) -> Result<std::collections::BTreeMap<u8, u32>, ParseError> {
+    parse_header(bytes)?;
     let mut map = std::collections::BTreeMap::new();
     for result in section_iter(bytes) {
         let hdr = result?;
@@ -261,6 +262,29 @@ mod tests {
         assert_eq!(diffs[0].status, DiffStatus::Equal { size: 4 });
         let s = format!("{}", diffs[0]);
         assert!(s.contains("4 bytes"), "expected actual size, got: {}", s);
+    }
+
+    #[test]
+    fn diff_rejects_invalid_header() {
+        let good = header();
+        let bad_version = vec![0x00, 0x61, 0x73, 0x6D, 0x02, 0x00, 0x00, 0x00];
+        let bad_magic = vec![0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00];
+        assert!(matches!(
+            diff_modules(&bad_version, &good),
+            Err(ParseError::InvalidVersion(_))
+        ));
+        assert!(matches!(
+            diff_modules(&good, &bad_magic),
+            Err(ParseError::InvalidMagic(_))
+        ));
+        assert!(matches!(
+            diff_modules(b"abcd", &good),
+            Err(ParseError::UnexpectedEof)
+        ));
+        assert!(matches!(
+            diff_modules(&good, b""),
+            Err(ParseError::UnexpectedEof)
+        ));
     }
 
     #[test]
