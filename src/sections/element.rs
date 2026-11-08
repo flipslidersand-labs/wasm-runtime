@@ -79,9 +79,27 @@ fn read_expr_vec(payload: &[u8], pos: &mut usize) -> Result<Vec<Vec<u8>>, ParseE
     *pos += n;
     let mut out = super::capped_vec(count, payload.len());
     for _ in 0..count {
-        out.push(super::read_init_expr(payload, pos)?);
+        let expr = super::read_init_expr(payload, pos)?;
+        validate_elem_expr(&expr)?;
+        out.push(expr);
     }
     Ok(out)
+}
+
+/// Checks that an element expr is exactly one const instruction plus `end`
+/// (`read_init_expr` alone accepts any run of const instructions).
+fn validate_elem_expr(bytes: &[u8]) -> Result<(), ParseError> {
+    // index of the expected `end` byte
+    let end_at = match bytes.first() {
+        Some(0xD0) => 2,
+        Some(0xD2) => 1 + decode_leb128_u32(bytes, 1)?.1,
+        _ => return parse_const_expr(bytes).map(|_| ()),
+    };
+    match bytes.get(end_at) {
+        Some(0x0B) if bytes.len() == end_at + 1 => Ok(()),
+        Some(&other) => Err(ParseError::UnsupportedInitExpr(other)),
+        None => Err(ParseError::UnexpectedEof),
+    }
 }
 
 /// Reads an `elemkind` byte, which must be `0x00` (funcref); anything else is
