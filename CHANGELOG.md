@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Memory limits validation: `min`/`max` above 65536 pages is rejected with `ValidationError::MemoryLimitExceeded` (#185, PR #189)
 - `wasm-dump --explain` byte-level annotation of the binary (#61, PR #89)
 - `wasm-dump --max-size <bytes>` input size limit, default 256 MiB (268435456 bytes); oversized input exits 1, also applies to both `--diff` inputs (PR #182)
+- `wasm-dump --explain-max-lines <N>` overrides the `--explain` output line cap (default 100000 unchanged, `0` = unlimited, which can use a lot of memory on large inputs) (#212)
 - `wasm_runtime::prelude` module re-exporting the common types and parse functions (#73, PR #83)
 - `wasm-dump` flags can be combined and given in any order (`--verbose --validate --stats`, etc.); unknown flags now print `error: unknown flag: --foo` (#72, PR #87)
 - `ParseErrorContext` (byte offset and section id) and `parse_module_with_context()` (#60, PR #85)
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ValidationError::LimitsMinGreaterThanMax`: memory/table limits with `min > max` (PR #174)
 - Conformance tests against the official WebAssembly testsuite, with a tracked baseline of expected failures; skipped unless `SPEC_TESTSUITE_DIR` and `wasm-tools` are available (PR #151)
 - Architecture Decision Records for three design decisions, listed in the README (PR #149)
+- `parse_module_with_options` and `ParseOptions`: a single entry point that combines the section-event hook with `ParseErrorContext` errors; `parse_module`, `parse_module_with_events` and `parse_module_with_context` are unchanged thin wrappers (#196, PR #213)
 
 ### Changed
 - `ValidationError` is now `#[non_exhaustive]`: downstream `match` needs a wildcard arm (#191)
@@ -47,12 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `parse_header`: replaced `try_into().unwrap()` with direct byte indexing to eliminate hidden panics (#65, PR #76)
 - `decode_const_expr`: same unwrap removal for f32/f64 byte array construction (#65, PR #76)
 - Use `checked_add` for length/offset arithmetic in `read_name`, `read_byte_vec`, export/code section decoders and `explain` so oversized LEB128 lengths no longer overflow `usize` on 32-bit targets (#202)
+- `--explain` output is capped at 100,000 lines (a final `output truncated` line marks the cut) and hex previews no longer format whole payloads; section decoders pre-allocate at most 1 MiB, accounting for element size, so crafted counts cannot inflate memory (#200, PR #211)
 - Element/data segment flags above `0xFF` are reported with their real value (`UnsupportedElementFlagWide` / `UnsupportedDataFlagWide`) instead of being truncated to the low 8 bits (#201, PR #216)
 - `section_iter` validates the declared section size against the remaining bytes, returning `UnexpectedEof` instead of panicking on truncated input (#111, PR #126)
 - Section decoders clamp LEB128 `count` allocation by payload length, so a huge count with a tiny payload no longer over-allocates (#119, PR #136)
 - `decode_leb128_signed` rejects non-sign-extended unused bits in the final byte with `Leb128Overflow` (PR #171)
 - `diff_modules` validates the magic/version header (PR #170)
-- `--explain` no longer panics when a locals declaration overruns the function body (PR #163)
+- `--explain` no longer panics when a locals declaration overruns the function body (PR #163); it now also annotates the overrun and resumes at the body end instead of misaligning the following bodies (#201, PR #215)
+- **Behavior change:** `ParseErrorContext` returned by `parse_module_with_context` / `parse_module_with_options` now carries `offset` and `section_id` for errors raised while iterating sections (header, order, size); they were `None` before. `offset` is the section id byte position for these errors and the payload start for body-decode errors (#201, PR #215)
 - WAT output: import/export names are escaped as WAT strings (PR #172); table `max` no longer fuses with the reftype, e.g. `10funcref` (#138, PR #158)
 
 ## [0.1.0] - 2026-08-18

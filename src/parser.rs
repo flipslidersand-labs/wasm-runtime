@@ -88,7 +88,10 @@ impl std::error::Error for ParseError {}
 pub struct ParseErrorContext {
     /// The underlying parse error.
     pub error: ParseError,
-    /// Byte offset of the section payload that triggered the error, if known.
+    /// Byte offset of the error, if known: the section payload start for
+    /// errors while decoding a section body; the section's id byte for a bad
+    /// section header (malformed/truncated size, out-of-order, size exceeding
+    /// the input); `0` for a bad module header.
     pub offset: Option<usize>,
     /// Section id that was being decoded when the error occurred, if known.
     pub section_id: Option<u8>,
@@ -237,6 +240,7 @@ pub fn section_iter(bytes: &[u8]) -> SectionIter<'_> {
         bytes,
         pos: 8,
         last_rank: 0,
+        error_at: None,
     }
 }
 
@@ -259,6 +263,16 @@ pub struct SectionIter<'a> {
     bytes: &'a [u8],
     pos: usize,
     last_rank: u8,
+    /// Offset and id of the section header whose decoding last failed.
+    error_at: Option<(usize, u8)>,
+}
+
+impl SectionIter<'_> {
+    /// Offset of the id byte and the section id of the most recent error
+    /// returned by `next`, if any.
+    pub(crate) fn error_location(&self) -> Option<(usize, u8)> {
+        self.error_at
+    }
 }
 
 impl<'a> Iterator for SectionIter<'a> {
@@ -269,8 +283,10 @@ impl<'a> Iterator for SectionIter<'a> {
             return None;
         }
 
+        let start = self.pos;
         let id = self.bytes[self.pos];
         self.pos += 1;
+        self.error_at = Some((start, id));
 
         if id != 0 {
             // Unknown ids have no rank: they are passed through (as an "unknown"
@@ -297,6 +313,7 @@ impl<'a> Iterator for SectionIter<'a> {
         };
         self.pos = end;
 
+        self.error_at = None;
         Some(Ok(SectionHeader { id, size, offset }))
     }
 }
