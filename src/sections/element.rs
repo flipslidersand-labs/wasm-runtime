@@ -157,14 +157,13 @@ pub fn decode_element_section(payload: &[u8]) -> Result<Vec<ElementSegment>, Par
             ElementInit::FuncIndices(read_u32_vec(payload, &mut pos)?)
         };
         // The offset is validated only after the list is read (error order).
-        let mode = match (kind, offset_bytes) {
-            (1, _) => ElementMode::Passive,
-            (3, _) => ElementMode::Declarative,
-            (_, Some(ob)) => ElementMode::Active {
+        let mode = match offset_bytes {
+            Some(ob) => ElementMode::Active {
                 table_index,
                 offset: parse_const_expr(&ob)?,
             },
-            (_, None) => unreachable!("active kinds always read an offset"),
+            None if kind == 1 => ElementMode::Passive,
+            None => ElementMode::Declarative,
         };
         let seg = ElementSegment {
             mode,
@@ -194,15 +193,17 @@ mod tests {
             ("f5", vec![1, 5, 0x6F, 1, 0xD0, 0x6F, 0x0B]),
             ("f6", vec![1, 6, 3, 0x41, 0, 0x0B, 0x70, 1, 0xD2, 7, 0x0B]),
             ("f7", vec![1, 7, 0x70, 1, 0xD2, 7, 0x0B]),
-            // bad offset expr is only reported after the element list is read
-            ("f0_badoff", vec![1, 0, 0x01, 0x0B, 1, 7]),
-            ("f2_badoff", vec![1, 2, 3, 0x01, 0x0B, 0, 1, 7]),
-            ("f4_badoff", vec![1, 4, 0x01, 0x0B, 1, 0xD2, 7, 0x0B]),
+            // `ref.func 0 end` passes read_init_expr but parse_const_expr rejects
+            // it as an offset; that error must come after the element list is
+            // read, so every truncation inside the list is UnexpectedEof.
+            ("f0_badoff", vec![1, 0, 0xD2, 0, 0x0B, 1, 7]),
+            ("f2_badoff", vec![1, 2, 3, 0xD2, 0, 0x0B, 0, 1, 7]),
+            ("f4_badoff", vec![1, 4, 0xD2, 0, 0x0B, 1, 0xD2, 7, 0x0B]),
             (
                 "f6_badoff",
-                vec![1, 6, 3, 0x01, 0x0B, 0x70, 1, 0xD2, 7, 0x0B],
+                vec![1, 6, 3, 0xD2, 0, 0x0B, 0x70, 1, 0xD2, 7, 0x0B],
             ),
-            ("f0_badoff_badvec", vec![1, 0, 0x01, 0x0B, 2, 7]),
+            ("f0_badoff_badvec", vec![1, 0, 0xD2, 0, 0x0B, 2, 7]),
             ("f1_badkind", vec![1, 1, 9, 1, 7]),
             ("f2_badkind", vec![1, 2, 3, 0x41, 0, 0x0B, 9, 1, 7]),
             ("f3_badkind", vec![1, 3, 9, 1, 7]),
