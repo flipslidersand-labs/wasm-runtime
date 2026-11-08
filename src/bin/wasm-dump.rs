@@ -223,7 +223,9 @@ fn main() {
     }
 
     if flags.verbose {
-        decode_errors += print_verbose(&bytes);
+        // The same sections were already counted by the listing; only keep
+        // the larger count so a failure is never reported twice.
+        decode_errors = decode_errors.max(print_verbose(&bytes));
     }
 
     // --explain is a byte-level walkthrough, so decode errors do not change
