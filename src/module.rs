@@ -300,7 +300,8 @@ pub enum ValidationError {
     /// An init expression (global init, active segment offset) uses `global.get`
     /// with an index beyond the global space.
     GlobalIndexOutOfRange { index: u32, global_space: usize },
-    /// A global init expression has a type different from the global's declared type.
+    /// An init expression (global init, active segment offset) has the wrong type:
+    /// a global's init differs from its declared type, or an offset is not `i32`.
     InitExprTypeMismatch { expected: ValType, found: ValType },
 }
 
@@ -621,7 +622,7 @@ impl Module {
         }
 
         // 9. a global's init expression must have the global's declared type.
-        //    (Element expr items and data/element offsets are not typed here.)
+        //    (Element expr items are not typed here.)
         let global_types: Vec<ValType> = self
             .imports
             .iter()
@@ -631,22 +632,42 @@ impl Module {
             })
             .chain(self.globals.iter().map(|g| g.global_type.valtype))
             .collect();
+        let type_of = |expr: &ConstExpr| match expr {
+            ConstExpr::I32(_) => Some(ValType::I32),
+            ConstExpr::I64(_) => Some(ValType::I64),
+            ConstExpr::F32(_) => Some(ValType::F32),
+            ConstExpr::F64(_) => Some(ValType::F64),
+            // Out-of-range indices are reported by step 8; skip here.
+            ConstExpr::GlobalGet(i) => global_types.get(*i as usize).copied(),
+        };
         for g in &self.globals {
-            let found = match &g.init {
-                ConstExpr::I32(_) => ValType::I32,
-                ConstExpr::I64(_) => ValType::I64,
-                ConstExpr::F32(_) => ValType::F32,
-                ConstExpr::F64(_) => ValType::F64,
-                ConstExpr::GlobalGet(i) => match global_types.get(*i as usize) {
-                    Some(t) => *t,
-                    None => continue,
-                },
-            };
-            if found != g.global_type.valtype {
-                return Err(ValidationError::InitExprTypeMismatch {
-                    expected: g.global_type.valtype,
-                    found,
-                });
+            if let Some(found) = type_of(&g.init) {
+                if found != g.global_type.valtype {
+                    return Err(ValidationError::InitExprTypeMismatch {
+                        expected: g.global_type.valtype,
+                        found,
+                    });
+                }
+            }
+        }
+
+        // 10. active data / element offsets must be i32.
+        let element_offsets = self.elements.iter().filter_map(|e| match &e.mode {
+            ElementMode::Active { offset, .. } => Some(offset),
+            _ => None,
+        });
+        let data_offsets = self.data.iter().filter_map(|d| match &d.mode {
+            DataMode::Active { offset, .. } => Some(offset),
+            _ => None,
+        });
+        for offset in element_offsets.chain(data_offsets) {
+            if let Some(found) = type_of(offset) {
+                if found != ValType::I32 {
+                    return Err(ValidationError::InitExprTypeMismatch {
+                        expected: ValType::I32,
+                        found,
+                    });
+                }
             }
         }
 
@@ -1648,5 +1669,133 @@ mod tests {
             mk(ValType::F32).validate(),
             mismatch(ValType::F32, ValType::I32)
         );
+    }
+
+    fn data_with_offset(offset: ConstExpr) -> DataSegment {
+        DataSegment {
+            mode: crate::sections::DataMode::Active {
+                memory_index: 0,
+                offset,
+            },
+            bytes: vec![],
+        }
+    }
+
+    fn elem_with_offset(offset: ConstExpr) -> ElementSegment {
+        ElementSegment {
+            mode: ElementMode::Active {
+                table_index: 0,
+                offset,
+            },
+            reftype: crate::sections::RefType::FuncRef,
+            init: ElementInit::FuncIndices(vec![]),
+        }
+    }
+
+    fn offset_module(imports: Vec<Import>, offset: ConstExpr, data: bool) -> Module {
+        let mut m = Module {
+            imports,
+            memories: vec![Limits { min: 1, max: None }],
+            tables: vec![Table {
+                reftype: crate::sections::RefType::FuncRef,
+                limits: Limits { min: 1, max: None },
+            }],
+            ..Module::default()
+        };
+        if data {
+            m.data = vec![data_with_offset(offset)];
+        } else {
+            m.elements = vec![elem_with_offset(offset)];
+        }
+        m
+    }
+
+    fn i64_global_import() -> Import {
+        Import {
+            module: "env".to_string(),
+            name: "g64".to_string(),
+            desc: ImportDesc::Global {
+                valtype: ValType::I64,
+                mutable: false,
+            },
+        }
+    }
+
+    #[test]
+    fn offset_must_be_i32_const() {
+        for data in [true, false] {
+            let run = |e| offset_module(vec![], e, data).validate();
+            assert_eq!(run(ConstExpr::I32(0)), Ok(()));
+            assert_eq!(run(ConstExpr::I64(0)), mismatch(ValType::I32, ValType::I64));
+            assert_eq!(
+                run(ConstExpr::F32(0.0)),
+                mismatch(ValType::I32, ValType::F32)
+            );
+            assert_eq!(
+                run(ConstExpr::F64(0.0)),
+                mismatch(ValType::I32, ValType::F64)
+            );
+        }
+    }
+
+    #[test]
+    fn offset_global_get_must_be_i32_global() {
+        for data in [true, false] {
+            let ok = offset_module(vec![imported_global()], ConstExpr::GlobalGet(0), data);
+            assert_eq!(ok.validate(), Ok(()));
+            let bad = offset_module(vec![i64_global_import()], ConstExpr::GlobalGet(0), data);
+            assert_eq!(bad.validate(), mismatch(ValType::I32, ValType::I64));
+        }
+    }
+
+    #[test]
+    fn offset_global_get_defined_global_type() {
+        let mut m = offset_module(vec![], ConstExpr::GlobalGet(0), true);
+        m.globals = vec![typed_global(ValType::I32, ConstExpr::I32(1))];
+        assert_eq!(m.validate(), Ok(()));
+        m.globals = vec![typed_global(ValType::I64, ConstExpr::I64(1))];
+        assert_eq!(m.validate(), mismatch(ValType::I32, ValType::I64));
+    }
+
+    #[test]
+    fn offset_out_of_range_global_get_reports_index_error_first() {
+        for data in [true, false] {
+            let m = offset_module(vec![], ConstExpr::GlobalGet(3), data);
+            assert_eq!(m.validate(), global_get_err(3, 0));
+        }
+    }
+
+    #[test]
+    fn passive_and_declarative_segments_have_no_offset() {
+        let m = Module {
+            data: vec![DataSegment {
+                mode: crate::sections::DataMode::Passive,
+                bytes: vec![],
+            }],
+            elements: vec![
+                ElementSegment {
+                    mode: ElementMode::Passive,
+                    reftype: crate::sections::RefType::FuncRef,
+                    init: ElementInit::FuncIndices(vec![]),
+                },
+                ElementSegment {
+                    mode: ElementMode::Declarative,
+                    reftype: crate::sections::RefType::FuncRef,
+                    init: ElementInit::FuncIndices(vec![]),
+                },
+            ],
+            data_count: Some(1),
+            ..Module::default()
+        };
+        assert_eq!(m.validate(), Ok(()));
+    }
+
+    #[test]
+    fn global_init_mismatch_wins_over_offset_mismatch() {
+        let mut m = offset_module(vec![], ConstExpr::I64(0), true);
+        m.globals = vec![typed_global(ValType::I32, ConstExpr::I64(1))];
+        assert_eq!(m.validate(), mismatch(ValType::I32, ValType::I64));
+        m.globals = vec![typed_global(ValType::F32, ConstExpr::I32(1))];
+        assert_eq!(m.validate(), mismatch(ValType::F32, ValType::I32));
     }
 }
