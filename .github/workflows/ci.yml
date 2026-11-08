@@ -33,11 +33,9 @@ jobs:
       - name: Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Remove lock file for MSRV compatibility
-        run: rm -f Cargo.lock
-
+      # Cargo.msrv.lock の更新: Cargo.lock を退避し `cargo +1.65.0 generate-lockfile` で生成した v3 ロックを Cargo.msrv.lock に移して Cargo.lock を戻す(1.65 は v4 ロックを読めない)
       - name: check (MSRV)
-        run: cargo check
+        run: cp Cargo.msrv.lock Cargo.lock && cargo check --locked
 
   audit:
     runs-on: ${{ vars.GATE_RUNNER }}
