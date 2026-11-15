@@ -14,7 +14,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: flipslidersand-labs/qa-workflows/.github/workflows/rust-test.yml@b79c88ce85af852181f14442c0875a0680faab73 # main (2026-11-08)
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/rust-test.yml@5a214aeee917c8d8cf18f78d24409af579d27d97 # main (2026-11-08)
     with:
       clippy-args: "--all-targets"
       test-args: "--all"
@@ -57,4 +57,4 @@ jobs:
       contents: read
       pull-requests: write
       checks: write
-    uses: flipslidersand-labs/qa-workflows/.github/workflows/reviewdog-rust.yml@b79c88ce85af852181f14442c0875a0680faab73 # main (2026-11-08)
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/reviewdog-rust.yml@5a214aeee917c8d8cf18f78d24409af579d27d97 # main (2026-11-08)
