@@ -1,5 +1,7 @@
 # wasm-runtime
 
+Release type: `library`
+
 WebAssembly binary parser written in Rust — decodes every known section of the WebAssembly MVP binary format into typed structs.
 
 Rust 製 WebAssembly バイナリパーサー。WebAssembly MVP バイナリフォーマットの全既知セクションを型付き構造体にデコードします。
