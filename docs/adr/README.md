@@ -1,6 +1,6 @@
 # 設計判断（ADR）/ Design decisions
 
-遡及して整理した Draft。当時の比較経緯は推定していない。雛形は repo-compass の ADR-025（public リポの ADR の基準）に従う。
+遡及して整理した Draft。当時の比較経緯は推定していない。雛形は public リポ用の ADR の基準に従う。
 
 | ADR | EN | 題 | 状態 |
 | --- | --- | --- | --- |

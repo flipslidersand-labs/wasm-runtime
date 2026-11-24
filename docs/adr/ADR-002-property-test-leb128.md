@@ -4,7 +4,7 @@
 **決定日:** 未確認（遡及記録: 2026-10-28）  
 **review_by:** 2026-11-17
 
-> 雛形: [ADR-000-public-template](https://github.com/flipslidersand-labs/repo-compass/blob/master/docs/adr/ADR-000-public-template.md)。遡及して書いた記録で、当時の比較経緯は推定していない。
+> 雛形: public リポ用の ADR 雛形。遡及して書いた記録で、当時の比較経緯は推定していない。
 
 ---
 
